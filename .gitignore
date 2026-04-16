@@ -1,0 +1,12 @@
+build
+.vscode
+.cache
+.clangd
+ll
+optimized
+doc
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.Identifier
