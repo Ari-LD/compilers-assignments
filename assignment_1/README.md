@@ -43,7 +43,7 @@ This is an **LLVM compiler plugin** that implements two optimization passes oper
 
 ---
 
-### 1. `AlgebraicIdentity` — Algebraic Identity
+### 1. Algebraic Identity
 
 Eliminates useless operations based on algebraic identity rules:
 
@@ -86,7 +86,7 @@ In these cases, an instruction can be replaced if the two operands are the same.
 
 ---
 
-### 2. `StrengthReduction` — Strength Reduction
+### 2. Strength Reduction
 
 Replaces **expensive** operations (multiplications and divisions) with **cheaper** ones:
 
@@ -114,12 +114,11 @@ Replaces **expensive** operations (multiplications and divisions) with **cheaper
 
 ---
 
-### 3. `Multi-Instruction` — Multi-Instruction
+### 3. Multi-Instruction
 Instructions can be removed if their value can be obtained from previous instructions:
 
 - `a = b+1, c = a-1 --> c = b`
 - `a = b*3, c = a/3 --> c = b`
-- `a = b << 3, c = a >> 3 --> c = b`
 - `a = b & 5, c = a & 5 --> c = a`
 - `a = b & 1, c = a & 2 --> c = 0`
 - `a = b | 5, c = a | 5 --> c = a`
