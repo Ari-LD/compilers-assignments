@@ -229,7 +229,7 @@ struct StrengthReduction: PassInfoMixin<StrengthReduction>, Common {
 
 /**
  * @brief generates an instruction to negate the resulting value by subtracting it from 0.
- * this handles operations involgin negative coefficients (e.g.  x * -1 => 0 - x )
+ * this handles operations involving negative coefficients (e.g.  x * -1 => 0 - x )
  * 
  * @param type 
  * @param finalValue 
