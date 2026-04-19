@@ -20,8 +20,8 @@ int fun (int a, int b)
     int r3 = -a % 8;
     
     //the return won't be optimized because while something akin to
-    // v * 24 would be optimized it would take 3 instructions
-    //because 24 is negative it becomes 4 instructions making it
-    //never better than a standard mul -AK
+    // v * 24 would be optimized it would take 3 instructions, and
+    //because here 24 is negative it adds a 4th instruction (total of 4 cycles)
+    //making it worse or equal to a standard mul (3-4 cycles) -AK-47
     return v * - 24;
 }
