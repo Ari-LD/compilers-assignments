@@ -649,7 +649,23 @@ Value* searchEquivalentMulDiv(Value* v, int currentNum, int currentDen){
  * find an instruction with a different opcode, reach the end of the chain of
  * instructions, or find one that matches our target.
  * in the last case: if a constant yields the desired offset, the instruction is replaced with the
- * operand variable of the matching instruction
+ * operand variable of the matching instruction.
+ * It was decided to leave this optimization, for the shift, commented because for both the right and left
+ * shift there are problems, the shift is a destructive operation so when shifting right you don't have the guarantee
+ * to shift left by the same amount of bits and to have the same value back, example:
+ * 10010110   say we shift this number to the right by two, the second bit (1) goes off bounds and becomes a 0
+ * so if we shift back to the left by two we get 10010100, a bit was lost.
+ * This would require us to check the value of the variable before shifting it but we decided that it was outisde
+ * of the scope of this assignment for the middle-end.
+ * A similiar problem is has if the first operation is a left shift but when we reach the Integer limit and go beyond
+ * the same problem occurs.
+ *
+ * //(the integer limit case may be implemented before the exam)
+ * 
+ * @param v 
+ * @param target 
+ * @param currentOffset 
+ * @return Value* 
  */
 /*
 Value* searchEquivalentShift(Value* v, int target, int currentOffset){
