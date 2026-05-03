@@ -1,0 +1,83 @@
+% ==========================================
+% SECTION 2: DOMINATOR ANALYSIS
+% ==========================================
+\section{Dominator Analysis}
+Dominator analysis if essential for building the Static Single Assignment (SSA) form and for finding natural loops in the Control Flow Graph (CFG). A node $d$ dominates a node $n$ if each path from the entry node to $n$ passes through $d$.
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Dominator Analysis} \\
+\midrule
+\textbf{Domain}                    & Sets of nodes (subsets of all basic blocks) \\
+\textbf{Direction}                 & Forward: $out[b] = f_b(in[b])$,\quad $in[b] = \wedge out[pred[b]]$ \\
+\textbf{Transfer Function}         & $out[b] = \{b\}\cup in[b]$ \\
+\textbf{Meet Operation ($\wedge$)} & Intersection ($\cap$) \\
+\textbf{Boundary Condition}        & $out[\text{Entry}] = \{\text{Entry}\}$ \\
+\textbf{Initial Interior Points}   & $out[B] = \text{U}$ (Universal set) \\
+\bottomrule
+\end{tabular}
+\caption{Dominator Analysis as a Dataflow problem }
+\end{table}
+
+\begin{algorithm}[H]
+\caption{Dominator Analysis Algorithm}
+\begin{algorithmic}[1]
+\State $OUT[\text{Entry}] \gets \{\text{Entry}\}$
+\For{\textbf{each} basic block $B \neq \text{Entry}$}
+    \State $OUT[B] \gets U$
+\EndFor
+\Statex
+\State $changes \gets \text{true}$
+\While{$changes$}
+    \State $changes \gets \text{false}$
+    \For{\textbf{each} basic block $B \neq \text{Entry}$}
+        \State $IN[B] \gets \bigcap_{p \in pred(B)} OUT[p]$
+        \State $OUT_{new} \gets \{B\} \cup IN[B]$
+        \If{$OUT[B] \neq OUT_{new}$}
+            \State $OUT[B] \gets OUT_{new}$
+            \State $changes \gets \text{true}$
+        \EndIf
+    \EndFor
+\EndWhile
+\end{algorithmic}
+\end{algorithm}
+
+\vspace{1cm}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\linewidth]{graphs/dominator_analysis_example.pdf}
+    \caption{Dominator analysis example CFG}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.6}
+\begin{tabular}{l cc cc}
+\toprule
+ & \multicolumn{2}{c}{\textbf{Iteration 1}}
+ & \multicolumn{2}{c}{\textbf{Iteration 2}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+\textbf{Block} & \textbf{IN[B]} & \textbf{OUT[B]}
+               & \textbf{IN[B]} & \textbf{OUT[B]} \\
+\midrule
+\textbf{A (Entry)}
+    & ---           & $\{A\}$       & ---           & $\{A\}$ \\
+\textbf{B}
+    & $\{A\}$       & $\{A,B\}$     & $\{A\}$       & $\{A,B\}$ \\
+\textbf{C}
+    & $\{A\}$       & $\{A,C\}$     & $\{A\}$       & $\{A,C\}$ \\
+\textbf{D}
+    & $\{A,C\}$     & $\{A,C,D\}$   & $\{A,C\}$     & $\{A,C,D\}$ \\
+\textbf{E}
+    & $\{A,C\}$     & $\{A,C,E\}$   & $\{A,C\}$     & $\{A,C,E\}$ \\
+\textbf{F}
+    & $\{A,C\}$     & $\{A,C,F\}$   & $\{A,C\}$     & $\{A,C,F\}$ \\
+\textbf{G}
+    & $\{A\}$       & $\{A,G\}$     & $\{A\}$       & $\{A,G\}$ \\
+\bottomrule
+\end{tabular}
+\caption{Iteration table for Dominator Analysis on the example CFG.}
+\end{table}

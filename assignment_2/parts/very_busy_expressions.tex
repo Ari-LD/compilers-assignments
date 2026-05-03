@@ -1,0 +1,78 @@
+% ==========================================
+% SECTION 1: VERY BUSY EXPRESSIONS
+% ==========================================
+\section{Very Busy Expressions}
+
+An expression is defined as a \textit{very busy expression} at a point \textit{p} if any path starting from \textit{p} uses the expression without redefining any of its operands. \\
+To identify them, we proceed backward, starting from the \textit{Exit} basic block of the Control Flow Graph (CFG), applying the transfer function and using the intersection ($\cap$) as the meet operator.
+
+\begin{table}[H] % Cambiato in [H]
+\centering
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Definition} \\
+\midrule
+\textbf{Domain} & Sets of expressions \\
+\textbf{Direction} & Backward: $in[b] = f_b(out[b])$, $out[b] = \wedge in[succ(b)]$ \\
+\textbf{Transfer Function} & $in[b] = Gen_b \cup (out[b] \setminus Kill_b)$ \\
+\textbf{Meet Operation ($\wedge$)} & Intersection ($\cap$) \\
+\textbf{Boundary Condition} & $in[\text{Exit}] = \emptyset$ \\
+\textbf{Initial Interior Points} & $in[B] = U$ (Universal set) \\
+\bottomrule
+\end{tabular}
+\caption{Very Busy Expressions parameters}
+\end{table}
+
+\begin{algorithm}[H] % Cambiato in [H]
+\caption{Very Busy Expressions Algorithm}
+\begin{algorithmic}[1]
+\State $in[\text{Exit}] \gets \emptyset$
+\For{\textbf{each} basic block $B \neq \text{Exit}$}
+    \State $in[B] \gets U$
+\EndFor
+\Statex
+\State $changes \gets \text{true}$
+\While{$changes$}
+    \State $changes \gets \text{false}$
+    \For{\textbf{each} basic block $B \neq \text{Exit}$}
+        \State $out[B] \gets \bigcap_{a \in succ(B)} in[a]$
+        \State $in_{new} \gets Gen_B \cup (out[B] \setminus Kill_B)$
+        \If{$in[B] \neq in_{new}$}
+            \State $in[B] \gets in_{new}$
+            \State $changes \gets \text{true}$
+        \EndIf
+    \EndFor
+\EndWhile
+\end{algorithmic}
+\end{algorithm}
+
+\begin{figure}[H] % Aggiunto [H] qui per bloccare l'immagine
+    \centering
+    \includegraphics[width=1.0\linewidth]{graphs/very_busy_expressions.pdf}
+    \caption{Very busy expression example CFG}
+\end{figure}
+
+\vspace{0.5cm}
+
+\begin{table}[H] % Cambiato in [H]
+\centering
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{lcccccc}
+\toprule
+ & \multicolumn{2}{c}{\textbf{Iteration 1}} & \multicolumn{2}{c}{\textbf{Iteration 2}} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5}
+\textbf{Basic Block} & \textbf{IN[B]} & \textbf{OUT[B]} & \textbf{IN[B]} & \textbf{OUT[B]} \\
+\midrule
+\textbf{BB1 (Entry)} & --- & $\{b-a, a!=b\}$ & --- & $\{b-a, a!=b\}$ \\
+\textbf{BB2} & $\{b-a, a!=b\}$ & $\{b-a\}$ & $\{b-a, a!=b\}$ & $\{b-a\}$ \\
+\textbf{BB3} & $\{b-a, a-b\}$ & $\{a-b\}$ & $\{b-a, a-b\}$ & $\{a-b\}$ \\
+\textbf{BB4} & $\{a-b\}$ & $\emptyset$ & $\{a-b\}$ & $\emptyset$ \\
+\textbf{BB5} & $\{b-a\}$& $\emptyset$ & $\{b-a\}$ & $\emptyset$ \\
+\textbf{BB6} & $\emptyset$ & $\{a-b\}$ & $\emptyset$ & $\{a-b\}$ \\
+\textbf{BB7} & $\{a-b\}$ & $\emptyset$ & $\{a-b\}$ & $\emptyset$ \\
+\textbf{BB8 (Exit)} & $\emptyset$ & --- & $\emptyset$ & --- \\
+\bottomrule
+\end{tabular}
+\caption{Iteration table for example CFG (we iterate on BBs in decreasing order)}
+\end{table}

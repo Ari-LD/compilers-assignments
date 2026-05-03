@@ -1,0 +1,96 @@
+% ==========================================
+% SECTION 3: CONSTANT PROPAGATION
+% ==========================================
+\section{Constant Propagation}
+
+Constant Propagation is a global dataflow analysis designed to discover variables that are guaranteed to hold a single
+constant value at specific program points across all possible execution paths. By tracking pairs of $<$variable, constant$>$, 
+this analysis enables the compiler to substitute variable uses with their actual values and statically fold 
+binary expressions whose operands are known constants, thereby optimizing execution efficiency.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Definition} \\
+\midrule
+\textbf{Domain} & Sets of pairs $<variable, value>$\\
+\textbf{Direction} & Forward \\ & $in[B] = \wedge(out[pred(B)])$ \\ & $out[B] = f_B(in(B)]$ \\
+\textbf{Transfer Function} & $f_B(x) = Gen_B \cup (x \setminus Kill_B)$ \\
+\textbf{Meet Operation ($\wedge$)} & Intersection ($\cap$) \\
+\textbf{Boundary Condition} & $in[entry] = \emptyset$, $out[entry] = \emptyset$ \\
+\textbf{Initial Interior Points} & $in[B] = U$, $out[B] = \emptyset$ \\
+\bottomrule
+\end{tabular}
+\caption{Contant Propagation parameters}
+\end{table}
+
+\begin{algorithm}[H]
+\caption{Constant Propagation}
+\begin{algorithmic}[1]
+\State $in[\text{Entry}] \gets \emptyset$
+\State $out[\text{Entry}] \gets \emptyset$
+\Statex
+\For{\textbf{each} basic block $B \neq \text{Entry}$}
+    \State $in[B] \gets U$
+    \State $out[B] \gets \emptyset$
+\EndFor
+\Statex
+\State $changes \gets \text{true}$
+\While{$changes$}
+    \State $changes \gets \text{false}$
+    \For{\textbf{each} basic block $B \neq \text{Entry}$}
+        \State // \textit{Meet operation: combine constants from all predecessors}
+        \State $in[B] \gets \bigcap_{p \in pred(B)} out[p]$
+        \Statex
+        \State // \textit{Transfer function: apply constant folding}
+        \State $out_{new} \gets f_B(in[B])$
+        \Statex
+        \If{$out[B] \neq out_{new}$}
+            \State $out[B] \gets out_{new}$
+            \State $changes \gets \text{true}$
+        \EndIf
+    \EndFor
+\EndWhile
+\end{algorithmic}
+\end{algorithm}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{graphs/CP.pdf}
+    \caption{Constant Propagation example CFG}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{2.5}
+\makebox[\textwidth][c]{
+\begin{tabular}{lcccccc}
+\toprule
+ & \multicolumn{2}{c}{\textbf{Iteration 1}} & \multicolumn{2}{c}{\textbf{Iteration 2}} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5}
+\textbf{Basic Block} & \textbf{IN[B]} & \textbf{OUT[B]} & \textbf{IN[B]} & \textbf{OUT[B]} \\
+\midrule
+\textbf{BB1 (Entry)} & \emptyset & \emptyset & \emptyset & \emptyset \\
+\textbf{BB2} & \emptyset & $<k, 2>$ & \emptyset & $<k, 2>$ \\
+\textbf{BB3} & $<k, 2>$ & $<k, 2>$ & $<k, 2>$ & $<k, 2>$ \\
+\textbf{BB4} & $<k, 2>$ & $<k, 2>, <a, 4>$ & $<k, 2>$ & $<k, 2>, <a, 4>$ \\
+\textbf{BB5} & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>, <x, 5>$ & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>, <x, 5>$ \\
+\textbf{BB6} & $<k, 2>$ & $<k, 2>, <a, 4>$ & $<k, 2>$ & $<k, 2>, <a, 4>$ \\
+\textbf{BB7} & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>, <x, 5>$ & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>, <x, 8>$ \\
+\textbf{BB8} & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>$ \\
+\textbf{BB9} & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>$ & $<a, 4>$ & $<a, 4>$ \\
+\textbf{BB10} & $<k, 4>, <a, 4>$ & $<k, 4>, <a, 4>, <b, 2>$ & $<a, 4>$ & $<a, 4>, <b, 2>$ \\
+\textbf{BB11} & $<k, 4>, <a, 4>, <b, 2>$ & \makecell{$<k, 4>, <a, 4>,$ \\ $<b, 2>, <x, 8>$} & $<a, 4>, <b, 2>$ & $<a, 4>, <b, 2>$ \\
+\textbf{BB12} & \makecell{$<k, 4>, <a, 4>,$ \\ $<b, 2>, <x, 8>$} & \makecell{$<k, 4>, <a, 4>, <b, 2>,$ \\ $<x, 8>, <y, 8>$} & $<a, 4>, <b, 2>$ & $<a, 4>, <b, 2>, <y, 8>$ \\
+\textbf{BB13} & \makecell{$<k, 4>, <a, 4>, <b, 2>,$ \\ $<x, 8>, <y, 8>$} & \makecell{$<k, 5>, <a, 4>, <b, 2>,$ \\ $<x, 8>, <y, 8>$} & $<a, 4>, <b, 2>, <y, 8>$ & $<a, 4>, <b, 2>, <y, 8>$ \\
+\textbf{BB14} & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>$ & $<a, 4>$ & $<a, 4>$ \\
+\textbf{BB15 (Exit)} & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>$ & $<a, 4>$ & $<a, 4>$ \\
+\bottomrule
+\end{tabular}
+}
+\captionsetup{justification=centering} % Forza il centraggio di tutte le righe
+\caption{Constant Propagation Algorithm Execution Table\\[1.5ex] 
+The third iteration is equal to the second one so we omitted it.}
+\end{table}
