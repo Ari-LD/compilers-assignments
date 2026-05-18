@@ -16,6 +16,7 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/Analysis/LoopIterator.h"
+#include "llvm/Analysis/ScalarEvolution.h"
 
 #include <unordered_map>
 #include <unordered_set>
@@ -100,10 +101,17 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
     PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM) {
 
         LoopInfo &LI = AM.getResult<LoopAnalysis>(F);
-        auto &DT = AM.getResult<DominatorTreeAnalysis>(F);
+        DominatorTree &DT = AM.getResult<DominatorTreeAnalysis>(F);
+        ScalarEvolution &SE = AM.getResult<ScalarEvolutionAnalysis>(F);
         bool modified = false;
+
         for (Loop *LL : LI.getLoopsInPreorder()) {
             if(!LL->isLoopSimplifyForm()) continue;
+
+            SCEV const *backEdgeCount = SE.getBackedgeTakenCount(LL);
+            if(const SCEVConstant *tripCount = dyn_cast<SCEVConstant>(backEdgeCount)) {
+                if(tripCount->getAPInt().getSExtValue() == 0) continue;
+            }
             
             std::unordered_set<Instruction*> invariantSet;
             std::vector<Instruction*> toMove;
