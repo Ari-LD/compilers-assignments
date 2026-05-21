@@ -652,15 +652,13 @@ Value* searchEquivalentMulDiv(Value* v, int currentNum, int currentDen){
  * operand variable of the matching instruction.
  * It was decided to leave this optimization, for the shift, commented because for both the right and left
  * shift there are problems, the shift is a destructive operation so when shifting right you don't have the guarantee
- * to shift left by the same amount of bits and to have the same value back, example:
- * 10010110   say we shift this number to the right by two, the second bit (1) goes off bounds and becomes a 0
- * so if we shift back to the left by two we get 10010100, a bit was lost.
+ * that you'll have the same value back when shifting back left by the same amount of bits, example:
+ * 10010110   say we shift this number to the right by two, the second bit (1) goes off bounds and becomes a 0,
+ * we get we get 00100101, then if we shift back to the left by two we get 10010100, a bit was lost.
  * This would require us to check the value of the variable before shifting it but we decided that it was outisde
- * of the scope of this assignment for the middle-end.
- * A similiar problem is has if the first operation is a left shift but when we reach the Integer limit and go beyond
- * the same problem occurs.
- *
- * //(the integer limit case may be implemented before the exam)
+ * of the scope of this assignment, the middle-end.
+ * A similiar problem is had if the first operation is a left shift but only when we reach the Integer limit and as then by
+ * shifting more bits start to get lost as well.
  * 
  * @param v 
  * @param target 
