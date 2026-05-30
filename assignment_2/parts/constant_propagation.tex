@@ -58,7 +58,7 @@ binary expressions whose operands are known constants, thereby optimizing execut
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\linewidth]{graphs/CP.pdf}
+    \includegraphics[width=0.8\linewidth]{graphs/constant_propagation.pdf}
     \caption{Constant Propagation example CFG}
 \end{figure}
 
@@ -78,15 +78,15 @@ binary expressions whose operands are known constants, thereby optimizing execut
 \textbf{BB4} & $<k, 2>$ & $<k, 2>, <a, 4>$ & $<k, 2>$ & $<k, 2>, <a, 4>$ \\
 \textbf{BB5} & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>, <x, 5>$ & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>, <x, 5>$ \\
 \textbf{BB6} & $<k, 2>$ & $<k, 2>, <a, 4>$ & $<k, 2>$ & $<k, 2>, <a, 4>$ \\
-\textbf{BB7} & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>, <x, 5>$ & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>, <x, 8>$ \\
-\textbf{BB8} & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>$ \\
-\textbf{BB9} & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>$ & $<a, 4>$ & $<a, 4>$ \\
+\textbf{BB7} & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>, <x, 8>$ & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>, <x, 8>$ \\
+\textbf{BB8} & $<k, 2>, <a, 4>$ & $<k, 4>, <a, 4>$ & $<k, 2>, <a, 4>$ & $<k,4>, <a, 4>$ \\
+\textbf{BB9} & $<k, 4>, <a, 4>$ & $<k, 4>, <a, 4>$ & $<a, 4>$ & $<a, 4>$ \\
 \textbf{BB10} & $<k, 4>, <a, 4>$ & $<k, 4>, <a, 4>, <b, 2>$ & $<a, 4>$ & $<a, 4>, <b, 2>$ \\
 \textbf{BB11} & $<k, 4>, <a, 4>, <b, 2>$ & \makecell{$<k, 4>, <a, 4>,$ \\ $<b, 2>, <x, 8>$} & $<a, 4>, <b, 2>$ & $<a, 4>, <b, 2>$ \\
 \textbf{BB12} & \makecell{$<k, 4>, <a, 4>,$ \\ $<b, 2>, <x, 8>$} & \makecell{$<k, 4>, <a, 4>, <b, 2>,$ \\ $<x, 8>, <y, 8>$} & $<a, 4>, <b, 2>$ & $<a, 4>, <b, 2>, <y, 8>$ \\
 \textbf{BB13} & \makecell{$<k, 4>, <a, 4>, <b, 2>,$ \\ $<x, 8>, <y, 8>$} & \makecell{$<k, 5>, <a, 4>, <b, 2>,$ \\ $<x, 8>, <y, 8>$} & $<a, 4>, <b, 2>, <y, 8>$ & $<a, 4>, <b, 2>, <y, 8>$ \\
-\textbf{BB14} & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>$ & $<a, 4>$ & $<a, 4>$ \\
-\textbf{BB15 (Exit)} & $<k, 2>, <a, 4>$ & $<k, 2>, <a, 4>$ & $<a, 4>$ & $<a, 4>$ \\
+\textbf{BB14} & $<k, 4>, <a, 4>$ & $<k, 4>, <a, 4>$ & $<a, 4>$ & $<a, 4>$ \\
+\textbf{BB15 (Exit)} & $<k, 4>, <a, 4>$ & $<k, 4>, <a, 4>$ & $<a, 4>$ & $<a, 4>$ \\
 \bottomrule
 \end{tabular}
 }
