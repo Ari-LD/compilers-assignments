@@ -43,7 +43,7 @@ int c, d, f;
 do{
     c = a+b; //this instruction can be moved before the loop
 
-    d = a+1; // this instruction can be moved before the loop
+    d = c+1; // this instruction can be moved before the loop
                     // (we need to make sure "c=a+b" is put first)
         
     f = i+3; // this instruction is not loop invariant, so it cannot be moved
