@@ -127,10 +127,11 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
       // Loop Invariant
       for (BasicBlock *BB : LBRPO) {
         for (Instruction &I : *BB) {
-          if (!isSafeToSpeculativelyExecute(&I))
+          if (I.mayHaveSideEffects())
             continue;
 
-          if (I.getOpcode() == Instruction::PHI)
+          if (I.getOpcode() == Instruction::PHI ||
+              I.getOpcode() == Instruction::Br)
             continue;
 
           if (I.mayReadOrWriteMemory())
