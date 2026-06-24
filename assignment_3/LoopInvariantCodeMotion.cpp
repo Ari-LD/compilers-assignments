@@ -44,7 +44,7 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
       Instruction *userInst = cast<Instruction>(U);
       BasicBlock *userBB = userInst->getParent();
 
-      if (!LL->contains(userBB)) {
+      if (!LL->contains(userBB)) {  //se l'uso non è dentro al loop vuol dire che è dopo quindi non è dead
         return false;
       }
     }
@@ -107,10 +107,13 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
     ScalarEvolution &SE = AM.getResult<ScalarEvolutionAnalysis>(F);
     bool modified = false;
 
+    // ritorna i top level loop in preorder
     for (Loop *LL : LI.getLoopsInPreorder()) {
       if (!LL->isLoopSimplifyForm())
         continue;
 
+        /* SCEV permette di sapere quante volte itero un loop, e se è = 0 non ha senso ottimizzarlo poichè non ci entriamo
+        */
       SCEV const *backEdgeCount = SE.getBackedgeTakenCount(LL);
       if (const SCEVConstant *tripCount =
               dyn_cast<SCEVConstant>(backEdgeCount)) {
@@ -121,6 +124,8 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
       std::unordered_set<Instruction *> invariantSet;
       std::vector<Instruction *> toMove;
 
+      /* ti ritorna i blocchi dentro ad un loop in post order cioè dall'ultimo nodo al primo
+      */
       LoopBlocksRPO LBRPO(LL);
       LBRPO.perform(&LI);
 
@@ -134,7 +139,7 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
               I.getOpcode() == Instruction::Br)
             continue;
 
-          if (I.mayReadOrWriteMemory())
+          if (I.mayReadOrWriteMemory()) //es load or store
             continue;
 
           bool isInvariant = true;
@@ -142,9 +147,9 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
           for (Use &Op : I.operands()) {
             Value *operandValue = Op.get();
 
-            if (auto *op_instr = dyn_cast<Instruction>(operandValue)) {
+            if (auto *op_instr = dyn_cast<Instruction>(operandValue)) { //provo a castarlo ad instructionS, se non lo è vuol dire che è costante quindi invariant
               if (LL->contains(op_instr->getParent()) &&
-                  invariantSet.count(op_instr) == 0) {
+                  invariantSet.count(op_instr) == 0) {  //controllo se è definita nel loop e se è l'istruzione che la definisce è già stata marcata come invariant e quindi è nel set
                 isInvariant = false;
                 break;
               }
@@ -187,6 +192,7 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
       auto preheader = LL->getLoopPreheader();
       auto lastInstr = preheader->getTerminator();
 
+      //muovo prima del terminatore
       for (auto instr : toMove) {
         instr->moveBefore(lastInstr);
         modified = true;

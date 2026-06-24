@@ -469,103 +469,62 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    */
   bool hasNegativeDependencies(Loop *L1, Loop *L2, ScalarEvolution &SE) {
 
-    std::vector<Instruction *> opsL1, opsL2;
+  std::vector<Instruction *> opsL1, opsL2;
 
-    for (BasicBlock *BB : L1->getBlocks()) {
-      for (Instruction &I : *BB)
-        if (I.mayReadOrWriteMemory())
-          opsL1.push_back(&I);
-    }
-
-    for (BasicBlock *BB : L2->getBlocks()) {
-      for (Instruction &I : *BB)
-        if (I.mayReadOrWriteMemory())
-          opsL2.push_back(&I);
-    }
-
-    if (opsL1.empty() || opsL2.empty())
-      return false;
-
-    for (Instruction *I1 : opsL1) {
-      for (Instruction *I2 : opsL2) {
-
-        // if both instruction are reading, they don't have a negative
-        // dependency
-        if (!I1->mayWriteToMemory() && !I2->mayWriteToMemory()) {
-          continue;
-        }
-
-        Value *Ptr1 = getPointerOperand(I1);
-        Value *Ptr2 = getPointerOperand(I2);
-
-        if (!Ptr1 || !Ptr2)
-          return true;
-
-        // if the instructions are operating on different arrays (so different
-        // pointers), there is no dependence
-        if (getUnderlyingObject(Ptr1) != getUnderlyingObject(Ptr2)) {
-          continue;
-        }
-
-        const SCEV *Scev1 = SE.getSCEV(Ptr1);
-        const SCEV *Scev2 = SE.getSCEV(Ptr2);
-
-        // the access equation must be linear (e.g. Base + i * step)
-        auto *AR1 = dyn_cast<SCEVAddRecExpr>(Scev1);
-        auto *AR2 = dyn_cast<SCEVAddRecExpr>(Scev2);
-
-        if (!AR1 || !AR2 || !AR1->isAffine() || !AR2->isAffine()) {
-          outs() << " -> Memory access is not affine/linear\n";
-          return true;
-        }
-
-        const SCEV *Step1 = AR1->getStepRecurrence(SE);
-        const SCEV *Step2 = AR2->getStepRecurrence(SE);
-
-        // if they iterate with different steps (e.g. i++ and i+=2), we do not
-        // manage them
-        if (Step1 != Step2) {
-          return true;
-        }
-
-        const SCEV *Start1 = AR1->getStart();
-        const SCEV *Start2 = AR2->getStart();
-
-        // we get the memory access difference at the beginning of the loop
-        const SCEV *Diff = SE.getMinusSCEV(Start2, Start1);
-
-        // the difference is constant
-        if (auto *C = dyn_cast<SCEVConstant>(Diff)) {
-          int64_t Distance = C->getAPInt().getSExtValue();
-
-          // the step is constant
-          if (auto *StepC = dyn_cast<SCEVConstant>(Step1)) {
-            int64_t StepVal = StepC->getAPInt().getSExtValue();
-
-            // Negative dependence condition:
-            // if the step is positive (e.g. i++) and the distance is positive
-            // (e.g L1 -> A[i], L2 -> A[i+1]) or they are both negative (e.g
-            // i--, L1 -> A[i], L2 -> A[i-1]), then L2 is accessing the data
-            // before L1, so we have a negative dependence
-            if ((Distance > 0 && StepVal > 0) ||
-                (Distance < 0 && StepVal < 0)) {
-              return true;
-            }
-          } else {
-            // the step is not costant, if there is a difference we are not sure
-            // if there is a negative dependence
-            if (Distance != 0)
-              return true;
-          }
-        } else {
-          // the difference is not costant, there could be a negative dependence
-          return true;
-        }
-      }
-    }
-
-    return false;
+  for (BasicBlock *BB : L1->getBlocks()) {
+    for (Instruction &I : *BB)
+      if (I.mayReadOrWriteMemory())
+        opsL1.push_back(&I);
   }
+
+  for (BasicBlock *BB : L2->getBlocks()) {
+    for (Instruction &I : *BB)
+      if (I.mayReadOrWriteMemory())
+        opsL2.push_back(&I);
+  }
+
+  if (opsL1.empty() || opsL2.empty())
+    return false;
+
+  for (Instruction *I1 : opsL1) {
+    for (Instruction *I2 : opsL2) {
+
+      // Dipendenza negativa rilevante solo per WAR (I1 legge, I2 scrive)
+      // o RAW (I1 scrive, I2 legge). Read-read e write-write si saltano.
+      bool isWAR = I1->mayReadFromMemory() && I2->mayWriteToMemory();
+      bool isRAW = I1->mayWriteToMemory()  && I2->mayReadFromMemory();
+
+      if (!isWAR && !isRAW)
+        continue;
+
+      Value *Ptr1 = getPointerOperand(I1);
+      Value *Ptr2 = getPointerOperand(I2);
+
+      if (!Ptr1 || !Ptr2)
+        return true;
+
+      // Se le istruzioni operano su array diversi non c'è dipendenza
+      if (getUnderlyingObject(Ptr1) != getUnderlyingObject(Ptr2))
+        continue;
+
+      const SCEV *Scoped1 = SE.getSCEVAtScope(Ptr1, L1);
+      const SCEV *Scoped2 = SE.getSCEVAtScope(Ptr2, L2);
+
+      // WAR: dipendenza negativa se lo store di L2 precede il load di L1
+      //      ovvero Scoped1 - Scoped2 < 0
+      // RAW: dipendenza negativa se il load di L2 precede lo store di L1
+      //      ovvero Scoped2 - Scoped1 < 0
+      const SCEV *diff = isWAR
+          ? SE.getMinusSCEV(Scoped1, Scoped2)
+          : SE.getMinusSCEV(Scoped2, Scoped1);
+
+      if (SE.isKnownNegative(diff))
+        return true;
+    }
+  }
+
+  return false;
+}
 
   /**
    * @brief checks for scalar dependencies between two loops
