@@ -539,10 +539,10 @@ bool hasNegativeDependencies(Loop *L1, Loop *L2, ScalarEvolution &SE) {
       // Se gli stride sono uguali (stessi pattern di accesso),
       // la dipendenza è determinata interamente dalla differenza degli start.
       // RAW: L1 scrive start1+i, L2 legge start2+i.
-      //      Se start2 > start1 → L2 legge avanti rispetto a L1
-      //      → dipendenza loop-carried negativa → blocca.
+      //      Se start2 > start1 -> L2 legge avanti rispetto a L1
+      //      -> dipendenza loop-carried negativa -> blocca.
       // WAR: L1 legge start1+i, L2 scrive start2+i.
-      //      Se start1 > start2 → L1 legge avanti rispetto a L2 → blocca.
+      //      Se start1 > start2 -> L1 legge avanti rispetto a L2 -> blocca.
       if (Stride1 && Stride2 && Stride1 == Stride2) {
         const SCEV *diffStart = isRAW
             ? SE.getMinusSCEV(Start2, Start1)
