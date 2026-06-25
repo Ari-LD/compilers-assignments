@@ -467,7 +467,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @return true
    * @return false
    */
-bool hasNegativeDependencies(Loop *L1, Loop *L2, ScalarEvolution &SE) {
+ bool hasNegativeDependencies(Loop *L1, Loop *L2, ScalarEvolution &SE) {
 
   std::vector<Instruction *> opsL1, opsL2;
 
@@ -489,9 +489,8 @@ bool hasNegativeDependencies(Loop *L1, Loop *L2, ScalarEvolution &SE) {
 
       bool isWAR = I1->mayReadFromMemory() && I2->mayWriteToMemory();
       bool isRAW = I1->mayWriteToMemory()  && I2->mayReadFromMemory();
-      bool isWAW = I1->mayWriteToMemory() && I2->mayWriteToMemory();
 
-      if (!isWAR && !isRAW && !isWAW)
+      if (!isWAR && !isRAW)
         continue;
 
       Value *Ptr1 = getPointerOperand(I1);
@@ -539,10 +538,10 @@ bool hasNegativeDependencies(Loop *L1, Loop *L2, ScalarEvolution &SE) {
       // Se gli stride sono uguali (stessi pattern di accesso),
       // la dipendenza è determinata interamente dalla differenza degli start.
       // RAW: L1 scrive start1+i, L2 legge start2+i.
-      //      Se start2 > start1 -> L2 legge avanti rispetto a L1
-      //      -> dipendenza loop-carried negativa -> blocca.
+      //      Se start2 > start1 → L2 legge avanti rispetto a L1
+      //      → dipendenza loop-carried negativa → blocca.
       // WAR: L1 legge start1+i, L2 scrive start2+i.
-      //      Se start1 > start2 -> L1 legge avanti rispetto a L2 -> blocca.
+      //      Se start1 > start2 → L1 legge avanti rispetto a L2 → blocca.
       if (Stride1 && Stride2 && Stride1 == Stride2) {
         const SCEV *diffStart = isRAW
             ? SE.getMinusSCEV(Start2, Start1)
@@ -561,7 +560,6 @@ bool hasNegativeDependencies(Loop *L1, Loop *L2, ScalarEvolution &SE) {
 
   return false;
 }
-
   /**
    * @brief checks for scalar dependencies between two loops
    *
