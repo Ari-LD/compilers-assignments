@@ -489,8 +489,9 @@ bool hasNegativeDependencies(Loop *L1, Loop *L2, ScalarEvolution &SE) {
 
       bool isWAR = I1->mayReadFromMemory() && I2->mayWriteToMemory();
       bool isRAW = I1->mayWriteToMemory()  && I2->mayReadFromMemory();
+      bool isWAW = I1->mayWriteToMemory() && I2->mayWriteToMemory();
 
-      if (!isWAR && !isRAW)
+      if (!isWAR && !isRAW && !isWAW)
         continue;
 
       Value *Ptr1 = getPointerOperand(I1);
