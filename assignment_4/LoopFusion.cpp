@@ -467,21 +467,19 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @return true
    * @return false
    */
-  bool hasNegativeDependencies(Loop *L1, Loop *L2, ScalarEvolution &SE) {
+bool hasNegativeDependencies(Loop *L1, Loop *L2, ScalarEvolution &SE) {
 
   std::vector<Instruction *> opsL1, opsL2;
 
-  for (BasicBlock *BB : L1->getBlocks()) {
+  for (BasicBlock *BB : L1->getBlocks())
     for (Instruction &I : *BB)
       if (I.mayReadOrWriteMemory())
         opsL1.push_back(&I);
-  }
 
-  for (BasicBlock *BB : L2->getBlocks()) {
+  for (BasicBlock *BB : L2->getBlocks())
     for (Instruction &I : *BB)
       if (I.mayReadOrWriteMemory())
         opsL2.push_back(&I);
-  }
 
   if (opsL1.empty() || opsL2.empty())
     return false;
@@ -489,8 +487,6 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
   for (Instruction *I1 : opsL1) {
     for (Instruction *I2 : opsL2) {
 
-      // Dipendenza negativa rilevante solo per WAR (I1 legge, I2 scrive)
-      // o RAW (I1 scrive, I2 legge). Read-read e write-write si saltano.
       bool isWAR = I1->mayReadFromMemory() && I2->mayWriteToMemory();
       bool isRAW = I1->mayWriteToMemory()  && I2->mayReadFromMemory();
 
@@ -503,23 +499,62 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
       if (!Ptr1 || !Ptr2)
         return true;
 
-      // Se le istruzioni operano su array diversi non c'è dipendenza
       if (getUnderlyingObject(Ptr1) != getUnderlyingObject(Ptr2))
         continue;
 
-      const SCEV *Scoped1 = SE.getSCEVAtScope(Ptr1, L1);
-      const SCEV *Scoped2 = SE.getSCEVAtScope(Ptr2, L2);
+      /*
+        Una SCEV di un puntatore che varia dentro un loop viene rappresentata da LLVM come una SCEVAddRecExpr:
+        { Start, +, Stride }<Loop>, ovvero al passo i-esimo del loop il puntatore punta a Start + i*Stride.
+        Start = il valore del puntatore alla prima iterazione (i=0)
+        Stride = di quanto avanza il puntatore ad ogni iterazione
 
-      // WAR: dipendenza negativa se lo store di L2 precede il load di L1
-      //      ovvero Scoped1 - Scoped2 < 0
-      // RAW: dipendenza negativa se il load di L2 precede lo store di L1
-      //      ovvero Scoped2 - Scoped1 < 0
-      const SCEV *diff = isWAR
-          ? SE.getMinusSCEV(Scoped1, Scoped2)
-          : SE.getMinusSCEV(Scoped2, Scoped1);
+        Per ogni coppia (I1 appartiene a L1, I2 appartiene a L2) che accede allo stesso array base, estraiamo la SCEV del puntatore di ciascuno e ne prendiamo start e stride:
+        c[i]   -> Start = c,    Stride = 4
+        c[i+1] -> Start = c+4,  Stride = 4
+        Se i due stride sono uguali (pattern di accesso identico, solo sfasati), la dipendenza è determinata interamente dalla differenza degli start:
 
-      if (SE.isKnownNegative(diff))
-        return true;
+        RAW: se Start2 - Start1 > 0, L2 legge avanti -> dipendenza negativa -> blocca
+        WAR: se Start1 - Start2 > 0, L1 legge avanti -> dipendenza negativa -> blocca
+
+        Se gli stride sono diversi o sconosciuti, non possiamo provare l'assenza di hazard -> blocchiamo per sicurezza.      
+      */
+
+      const SCEV *S1 = SE.getSCEV(Ptr1);
+      const SCEV *S2 = SE.getSCEV(Ptr2);
+
+      // Estrai start e stride di ciascuno
+      const SCEV *Start1 = S1, *Stride1 = nullptr;
+      const SCEV *Start2 = S2, *Stride2 = nullptr;
+
+      if (auto *AR1 = dyn_cast<SCEVAddRecExpr>(S1)) {
+        Start1  = AR1->getStart();
+        Stride1 = AR1->getStepRecurrence(SE);
+      }
+      if (auto *AR2 = dyn_cast<SCEVAddRecExpr>(S2)) {
+        Start2  = AR2->getStart();
+        Stride2 = AR2->getStepRecurrence(SE);
+      }
+
+      // Se gli stride sono uguali (stessi pattern di accesso),
+      // la dipendenza è determinata interamente dalla differenza degli start.
+      // RAW: L1 scrive start1+i, L2 legge start2+i.
+      //      Se start2 > start1 → L2 legge avanti rispetto a L1
+      //      → dipendenza loop-carried negativa → blocca.
+      // WAR: L1 legge start1+i, L2 scrive start2+i.
+      //      Se start1 > start2 → L1 legge avanti rispetto a L2 → blocca.
+      if (Stride1 && Stride2 && Stride1 == Stride2) {
+        const SCEV *diffStart = isRAW
+            ? SE.getMinusSCEV(Start2, Start1)
+            : SE.getMinusSCEV(Start1, Start2);
+
+        if (SE.isKnownPositive(diffStart))
+          return true;
+      } else {
+        // Stride diversi o non noti: non possiamo provare assenza di hazard
+        const SCEV *diffStart = SE.getMinusSCEV(Start2, Start1);
+        if (SE.isKnownNegative(diffStart) || SE.isKnownPositive(diffStart))
+          return true;
+      }
     }
   }
 
