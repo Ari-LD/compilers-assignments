@@ -109,6 +109,9 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
 
     // ritorna i top level loop in preorder
     for (Loop *LL : LI.getLoopsInPreorder()) {
+      // Verifica che il loop sia in forma canonica (Loop Simplify Form), ossia che
+      // possieda un unico preheader (essenziale per spostarvi il codice invariant),
+      // un unico backedge e blocchi di uscita dedicati.
       if (!LL->isLoopSimplifyForm())
         continue;
 
@@ -124,7 +127,7 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
       std::unordered_set<Instruction *> invariantSet;
       std::vector<Instruction *> toMove;
 
-      /* ti ritorna i blocchi dentro ad un loop in post order cioè dall'ultimo nodo al primo
+      /* ti ritorna i blocchi dentro ad un loop in reverse post order, così da visitare tutti i predecessori prima di visitare un blocco
       */
       LoopBlocksRPO LBRPO(LL);
       LBRPO.perform(&LI);
@@ -132,13 +135,16 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
       // Loop Invariant
       for (BasicBlock *BB : LBRPO) {
         for (Instruction &I : *BB) {
-          if (I.mayHaveSideEffects())
+          // le istruzioni che hanno side effetcs non sono invariant
             continue;
 
+          // le PHI e le Br non sono invariant
           if (I.getOpcode() == Instruction::PHI ||
               I.getOpcode() == Instruction::Br)
             continue;
 
+          //  le istruzioni che leggono o scrivono in memoria (load e store) non sono invariant
+          if (I.mayHaveSideEffects())
           if (I.mayReadOrWriteMemory()) //es load or store
             continue;
 
@@ -147,9 +153,9 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
           for (Use &Op : I.operands()) {
             Value *operandValue = Op.get();
 
-            if (auto *op_instr = dyn_cast<Instruction>(operandValue)) { //provo a castarlo ad instructionS, se non lo è vuol dire che è costante quindi invariant
+            if (auto *op_instr = dyn_cast<Instruction>(operandValue)) { //provo a castarlo ad instruction, se non lo è vuol dire che è costante quindi invariant
               if (LL->contains(op_instr->getParent()) &&
-                  invariantSet.count(op_instr) == 0) {  //controllo se è definita nel loop e se è l'istruzione che la definisce è già stata marcata come invariant e quindi è nel set
+                  invariantSet.count(op_instr) == 0) {  //controllo se è definita nel loop, e se lo è, controllo che l'istruzione che la definisce non sia già stata marcata come invariant e quindi non si trova nel set e che quindi non è invariant
                 isInvariant = false;
                 break;
               }
