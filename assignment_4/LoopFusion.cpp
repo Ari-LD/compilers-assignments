@@ -489,8 +489,9 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
 
       bool isWAR = I1->mayReadFromMemory() && I2->mayWriteToMemory();
       bool isRAW = I1->mayWriteToMemory()  && I2->mayReadFromMemory();
+      bool isWAW = I1->mayWriteToMemory() && I2->mayWriteToMemory();
 
-      if (!isWAR && !isRAW)
+      if (!isWAR && !isRAW && !isWAW)
         continue;
 
       Value *Ptr1 = getPointerOperand(I1);
@@ -718,7 +719,6 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     if (Loop *ParentLoop = L2->getParentLoop())
       ParentLoop->removeChildLoop(L2);
 
-    LI.erase(L2);
     return true;
   }
 
@@ -848,7 +848,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     if (Loop *ParentLoop = L2->getParentLoop())
       ParentLoop->removeChildLoop(L2);
 
-    LI.erase(L2);
+    //LI.erase(L2);
     return true;
   }
 
@@ -975,7 +975,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     if (Loop *ParentLoop = L2->getParentLoop())
       ParentLoop->removeChildLoop(L2);
 
-    LI.erase(L2);
+    //LI.erase(L2);
     return true;
   }
   /**
@@ -991,133 +991,134 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @return true
    * @return false
    */
-  bool processNestLevelLoops(std::vector<Loop *> &siblings, DominatorTree &DT,
-                             PostDominatorTree &PDT, ScalarEvolution &SE,
-                             LoopInfo &LI, Function &F) {
-    std::vector<Loop *> candidateLoops;
-    bool fused = false;
+  bool processNestLevelLoops(std::vector<Loop *> siblings, // <-- COPIA, non reference
+                           DominatorTree &DT,
+                           PostDominatorTree &PDT, ScalarEvolution &SE,
+                           LoopInfo &LI, Function &F,
+                           bool isTopLevel = false) {
+  std::vector<Loop *> candidateLoops;
+  bool fused = false;
 
-    // filtering loops that are not candidate for LF
-    for (Loop *L : siblings) {
-      if (L->isLoopSimplifyForm()) {
-        candidateLoops.push_back(L);
-      }
+  for (Loop *L : siblings) {
+    if (L->isLoopSimplifyForm()) {
+      candidateLoops.push_back(L);
     }
+  }
 
-    std::vector<std::vector<Loop *>> cfeGroups;
-    if (candidateLoops.size() >= 2) {
-      // make sure the loops are ordered from first to last
-      std::sort(candidateLoops.begin(), candidateLoops.end(),
-                [&](Loop *L1, Loop *L2) {
-                  return DT.dominates(getLoopEntry(L1), getLoopEntry(L2));
-                });
+  std::vector<std::vector<Loop *>> cfeGroups;
+  if (candidateLoops.size() >= 2) {
+    std::sort(candidateLoops.begin(), candidateLoops.end(),
+              [&](Loop *L1, Loop *L2) {
+                return DT.dominates(getLoopEntry(L1), getLoopEntry(L2));
+              });
 
-      for (auto &loop : candidateLoops) {
-        bool addedToGroup = false;
-
-        for (auto &group : cfeGroups) {
-          if (areControlFlowEquivalent(group.front(), loop, DT, PDT)) {
-            group.push_back(loop);
-            addedToGroup = true;
-            break;
-          }
-        }
-
-        if (!addedToGroup) {
-          cfeGroups.push_back({loop});
+    for (auto &loop : candidateLoops) {
+      bool addedToGroup = false;
+      for (auto &group : cfeGroups) {
+        if (areControlFlowEquivalent(group.front(), loop, DT, PDT)) {
+          group.push_back(loop);
+          addedToGroup = true;
+          break;
         }
       }
-    }
-
-    // debug output
-    for (auto &group : cfeGroups) {
-      if (group.size() >= 2) {
-        outs() << "found CFE with size " << group.size() << "\n";
+      if (!addedToGroup) {
+        cfeGroups.push_back({loop});
       }
     }
+  }
 
-    for (auto &group : cfeGroups) {
-      int baseIndex = 0;
-      auto &baseLoop = group[baseIndex];
-      while (group.size() >= 2 && baseIndex < group.size() - 1) {
-        auto nextLoop = group[baseIndex + 1];
+  for (auto &group : cfeGroups) {
+    if (group.size() >= 2)
+      outs() << "found CFE with size " << group.size() << "\n";
+  }
 
-        if (!hasSameTripCount(baseLoop, nextLoop)) {
-          outs() << "Failed : Could not compute or different trip counts\n";
-          baseIndex++;
-          baseLoop = group[baseIndex];
-          continue;
-        }
+  for (auto &group : cfeGroups) {
+    int baseIndex = 0;
+    while (group.size() >= 2 && baseIndex < (int)group.size() - 1) {
+      // Leggi i puntatori freschi ogni iterazione -- NO reference
+      Loop *baseLoop = group[baseIndex];
+      Loop *nextLoop = group[baseIndex + 1];
 
-        if (hasNegativeDependencies(baseLoop, nextLoop, SE)) {
-          outs() << "Failed: negative dependencies found\n";
-          baseIndex++;
-          baseLoop = group[baseIndex];
-          continue;
-        }
+      if (!hasSameTripCount(baseLoop, nextLoop)) {
+        outs() << "Failed : Could not compute or different trip counts\n";
+        baseIndex++;
+        continue;
+      }
+      if (hasNegativeDependencies(baseLoop, nextLoop, SE)) {
+        outs() << "Failed: negative dependencies found\n";
+        baseIndex++;
+        continue;
+      }
+      if (hasScalarDependencies(baseLoop, nextLoop)) {
+        outs() << "Failed: scalar dependencies found\n";
+        baseIndex++;
+        continue;
+      }
 
-        if (hasScalarDependencies(baseLoop, nextLoop)) {
-          outs() << "Failed: scalar dependencies found\n";
-          baseIndex++;
-          baseLoop = group[baseIndex];
-          continue;
-        }
+      SetVector<Instruction *> toMoveBeforeL1;
+      SetVector<Instruction *> toMoveAfterL2;
 
-        SetVector<Instruction *> toMoveBeforeL1;
-        SetVector<Instruction *> toMoveAfterL2;
+      if (!areAdjacent(baseLoop, nextLoop, toMoveBeforeL1, toMoveAfterL2)) {
+        outs() << "Failed: loops are not adjacent\n";
+        baseIndex++;
+        continue;
+      }
 
-        if (!areAdjacent(baseLoop, nextLoop, toMoveBeforeL1, toMoveAfterL2)) {
-          outs() << "Failed: loops are not adjacent\n";
-          baseIndex++;
-          baseLoop = group[baseIndex];
-          continue;
-        }
+      if (!toMoveAfterL2.empty() || !toMoveBeforeL1.empty()) {
+        moveInstructionsInBetweenLoops(baseLoop, nextLoop, toMoveBeforeL1,
+                                       toMoveAfterL2);
+      }
 
-        if (!toMoveAfterL2.empty() || !toMoveBeforeL1.empty()) {
-          moveInstructionsInBetweenLoops(baseLoop, nextLoop, toMoveBeforeL1,
-                                         toMoveAfterL2);
-        }
+      outs() << "All checks completed, trying to fuse...\n";
+      bool fusionSuccess = false;
+      if (baseLoop->isGuarded()) {
+        fusionSuccess = fuseGuardedLoops(baseLoop, nextLoop, LI);
+      } else if (isLoopDoWhile(baseLoop) && isLoopDoWhile(nextLoop)) {
+        fusionSuccess = fuseDoWhile(baseLoop, nextLoop, LI);
+      } else {
+        fusionSuccess = fuseLoops(baseLoop, nextLoop, LI);
+      }
 
-        outs() << "All checks completed, trying to fuse...\n";
-        bool fusionSuccess = false;
-        if (baseLoop->isGuarded()) {
-          fusionSuccess = fuseGuardedLoops(baseLoop, nextLoop, LI);
-        } else if (isLoopDoWhile(baseLoop) && isLoopDoWhile(nextLoop)) {
-          fusionSuccess = fuseDoWhile(baseLoop, nextLoop, LI);
-        } else {
-          fusionSuccess = fuseLoops(baseLoop, nextLoop, LI);
-        }
-        if (fusionSuccess) {
-          outs() << "Loops successfully fused\n";
-          group.erase(group.begin() + baseIndex + 1);
-          fused = true;
-          removeUnreachableBlocks(F);
+      if (fusionSuccess) {
+        outs() << "Loops successfully fused\n";
+        fused = true;
 
-          siblings.erase(
-              std::remove(siblings.begin(), siblings.end(), nextLoop),
-              siblings.end());
+        // nextLoop è già stato deallocato da LI.erase dentro fuseLoops
+        // rimuovilo dal group -- baseIndex resta fermo
+        group.erase(group.begin() + baseIndex + 1);
 
-          DT.recalculate(F);
-          PDT.recalculate(F);
-        } else {
-          outs() << "Error while trying to fuse\n";
-          baseIndex++;
-          baseLoop = group[baseIndex];
-        }
+        removeUnreachableBlocks(F);
+        DT.recalculate(F);
+        PDT.recalculate(F);
+        // NON incrementare: il fused loop è ancora in group[baseIndex]
+      } else {
+        outs() << "Error while trying to fuse\n";
+        baseIndex++;
       }
     }
+  }
 
-    bool childrenFused = false;
-    for (Loop *L : siblings) {
-      std::vector<Loop *> children = L->getSubLoopsVector();
-      if (processNestLevelLoops(children, DT, PDT, SE, LI, F)) {
+  // Ricorsione sui figli: ricostruisci la lista figli da LI aggiornato
+  // Per ogni loop ancora valido in siblings, processa i suoi figli
+  std::vector<Loop *> currentTopLevel;
+  if (isTopLevel) {
+    for (Loop *L : LI) currentTopLevel.push_back(L);
+  } else {
+    currentTopLevel = siblings; // già una copia
+  }
+
+  bool childrenFused = false;
+  for (Loop *L : currentTopLevel) {
+    std::vector<Loop *> children = L->getSubLoopsVector();
+    if (children.size() >= 2) {
+      if (processNestLevelLoops(children, DT, PDT, SE, LI, F, false)) {
         childrenFused = true;
       }
     }
-
-    return fused || childrenFused;
   }
 
+  return fused || childrenFused;
+}
   /**
    * @brief separates instructions from the latch, we use it especially for
    * while loops to make sure instruction inserted in the first loop latch are
@@ -1151,7 +1152,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     }
 
     bool changed =
-        processNestLevelLoops(LI.getTopLevelLoopsVector(), DT, PDT, SE, LI, F);
+        processNestLevelLoops(LI.getTopLevelLoopsVector(), DT, PDT, SE, LI, F, true);
 
     return (changed ? PreservedAnalyses::none() : PreservedAnalyses::all());
   }
