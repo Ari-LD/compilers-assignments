@@ -382,16 +382,20 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
   void moveInstructionsInBetweenLoops(Loop *L1, Loop *L2,
                                       SetVector<Instruction *> &toMoveBeforeL1,
                                       SetVector<Instruction *> &toMoveAfterL2) {
+
+    /*prendo il blocco di entrata di L1 e muovo le istruzioni da spostare prima di L1, 
+    e prendo il blocco di uscita di L2 e muovo le istruzioni da spostare dopo L2
+    */
     BasicBlock *EntryL1 = getLoopEntry(L1);
     if (EntryL1) {
-      Instruction *whereToMoveTo = EntryL1->getTerminator();
+      Instruction *whereToMoveTo = EntryL1->getTerminator();  //le metto prima dell'ultima istruzione del blocco 
       for (Instruction *I : toMoveBeforeL1)
         I->moveBefore(whereToMoveTo);
     }
 
     BasicBlock *ExitL2 = getLoopExit(L2);
     if (ExitL2) {
-      Instruction *whereToMoveTo = ExitL2->getFirstNonPHI();
+      Instruction *whereToMoveTo = ExitL2->getFirstNonPHI();  //le metto prima della prima istruzione non PHI del blocco, perchè la phi è all'inizio del blocco
       for (Instruction *I : toMoveAfterL2)
         I->moveBefore(whereToMoveTo);
     }
@@ -991,7 +995,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @return true
    * @return false
    */
-  bool processNestLevelLoops(std::vector<Loop *> siblings, // <-- COPIA, non reference
+  bool processNestLevelLoops(std::vector<Loop *> siblings, // loop dello stesso livello e anche dello stesso scope
                            DominatorTree &DT,
                            PostDominatorTree &PDT, ScalarEvolution &SE,
                            LoopInfo &LI, Function &F,
@@ -1007,11 +1011,13 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
 
   std::vector<std::vector<Loop *>> cfeGroups;
   if (candidateLoops.size() >= 2) {
-    std::sort(candidateLoops.begin(), candidateLoops.end(),
+
+    std::sort(candidateLoops.begin(), candidateLoops.end(), //li riordino dal primo all'ultimo
               [&](Loop *L1, Loop *L2) {
-                return DT.dominates(getLoopEntry(L1), getLoopEntry(L2));
+                return DT.dominates(getLoopEntry(L1), getLoopEntry(L2));  //controllo dominanza tra i due loop, se L1 domina L2 allora L1 viene prima di L2
               });
 
+    //faccio dei gruppi di loop cfe(control flow equivalent), così sono sicuro che loop dello stesso gruppo vengono eseguiti insieme
     for (auto &loop : candidateLoops) {
       bool addedToGroup = false;
       for (auto &group : cfeGroups) {
@@ -1021,12 +1027,13 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
           break;
         }
       }
-      if (!addedToGroup) {
+      if (!addedToGroup) {  //creo un nuovo gruppo se non è stato aggiunto a nessun altro, poichè inizia un altro gruppo cfe diverso
         cfeGroups.push_back({loop});
       }
     }
   }
 
+  //controllo che i gruppi cfe abbiano almeno 2 loop, altrimenti non ha senso provare a fonderli
   for (auto &group : cfeGroups) {
     if (group.size() >= 2)
       outs() << "found CFE with size " << group.size() << "\n";
@@ -1034,6 +1041,12 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
 
   for (auto &group : cfeGroups) {
     int baseIndex = 0;
+    /* per ogni gruppo faccio delle coppie, il base loop è il primo della coppia mentre il next loop è il secondo, 
+    se riesco a fonderli allora il base loop rimane e il next loop viene rimosso dal gruppo, altrimenti passo alla coppia successiva
+    poi itero di nuovo e come base loop rimane il primo della coppia e lo confronto col terzo loop creando una nuova coppia
+    Altrimenti se non riesco a fonderli come base loop metto il loop successivo
+    
+    */
     while (group.size() >= 2 && baseIndex < (int)group.size() - 1) {
       // Leggi i puntatori freschi ogni iterazione -- NO reference
       Loop *baseLoop = group[baseIndex];
@@ -1049,12 +1062,15 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
         baseIndex++;
         continue;
       }
-      if (hasScalarDependencies(baseLoop, nextLoop)) {
+      if (hasScalarDependencies(baseLoop, nextLoop)) {  //controllo extra
         outs() << "Failed: scalar dependencies found\n";
         baseIndex++;
         continue;
       }
 
+      /*
+        sono istruzioni che dobbiamo spostare prima del primo loop e dopo il secondo loop, così da non avere istruzioni tra i due loop che impediscono la fusione
+      */
       SetVector<Instruction *> toMoveBeforeL1;
       SetVector<Instruction *> toMoveAfterL2;
 
@@ -1064,11 +1080,14 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
         continue;
       }
 
+      // se sono adiacenti e ci sono istruzioni da spostare, le sposto 
       if (!toMoveAfterL2.empty() || !toMoveBeforeL1.empty()) {
         moveInstructionsInBetweenLoops(baseLoop, nextLoop, toMoveBeforeL1,
                                        toMoveAfterL2);
       }
 
+      //QUA FONDO I LOOPS
+      //Qua controllo i diversi tipi di loop, se sono guarded o do while, così da usare la funzione di fusione corretta
       outs() << "All checks completed, trying to fuse...\n";
       bool fusionSuccess = false;
       if (baseLoop->isGuarded()) {
@@ -1079,18 +1098,17 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
         fusionSuccess = fuseLoops(baseLoop, nextLoop, LI);
       }
 
+      // se ho fuso con successo, rimuovo il next loop dal gruppo e non incremento baseIndex, così da confrontare il base loop con il nuovo next loop
       if (fusionSuccess) {
         outs() << "Loops successfully fused\n";
         fused = true;
 
-        // nextLoop è già stato deallocato da LI.erase dentro fuseLoops
-        // rimuovilo dal group -- baseIndex resta fermo
         group.erase(group.begin() + baseIndex + 1);
 
-        removeUnreachableBlocks(F);
+        removeUnreachableBlocks(F); //rimuove i blocchi non raggiungibili dopo la fusione, così da non avere blocchi morti nel CFG, tipo il preheader e l'header e il latch del secondo loop che non è più raggiungibile(però dipende dalla fusione che facciamo)
         DT.recalculate(F);
         PDT.recalculate(F);
-        // NON incrementare: il fused loop è ancora in group[baseIndex]
+        
       } else {
         outs() << "Error while trying to fuse\n";
         baseIndex++;
@@ -1104,12 +1122,13 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
   if (isTopLevel) {
     for (Loop *L : LI) currentTopLevel.push_back(L);
   } else {
-    currentTopLevel = siblings; // già una copia
+    currentTopLevel = siblings;
   }
 
+  //itero ricorsivamente sui figli dei loop, così da provare a fondere anche i loop interni
   bool childrenFused = false;
   for (Loop *L : currentTopLevel) {
-    std::vector<Loop *> children = L->getSubLoopsVector();
+    std::vector<Loop *> children = L->getSubLoopsVector();  //loop interni al loop corrente
     if (children.size() >= 2) {
       if (processNestLevelLoops(children, DT, PDT, SE, LI, F, false)) {
         childrenFused = true;
@@ -1128,7 +1147,8 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @param DT
    * @param LI
    */
-  void prepareLoopLatch(Loop *L, DominatorTree &DT, LoopInfo &LI) {
+   //toglie le istruzioni dal latch (anche la compare nel caso do while) se non sono il terminatore, così da evitare che vengano spostate dopo il secondo loop
+  void prepareLoopLatch(Loop *L, DominatorTree &DT, LoopInfo &LI) { 
     auto latch = L->getLoopLatch();
     auto header = L->getHeader();
     if (latch == header || latch->size() > 2) {
@@ -1143,12 +1163,13 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     DominatorTree &DT = AM.getResult<DominatorTreeAnalysis>(F);
     PostDominatorTree &PDT = AM.getResult<PostDominatorTreeAnalysis>(F);
 
+    // LI.getLoopsInPreorder() scorre tutti i loop in preorder, così da processare prima i loop esterni e poi quelli interni, anche se ci basta un qualsiasi ordine
     for (auto L : LI.getLoopsInPreorder()) {
-      if (!L->isLoopSimplifyForm())
+      if (!L->isLoopSimplifyForm()) //loop in forma semplificata, sottoinsieme dei loop naturali, che hanno preheader e latch univoci, e sono più facili da gestire
         continue;
-      auto backedgeLoop = SE.getBackedgeTakenCount(L);
-      loopsTripCountMap[L] = backedgeLoop;
-      prepareLoopLatch(L, DT, LI);
+      auto backedgeLoop = SE.getBackedgeTakenCount(L); // calcolo tutti i trip count dei loop prima di iniziare la fusione, così da non invalidare le SCEV durante la fusione
+      loopsTripCountMap[L] = backedgeLoop;  //salva il trip count del loop in una mappa, così da poterlo usare per confrontarlo con altri loop
+      prepareLoopLatch(L, DT, LI);  //vai alla funzione che prepara il latch del loop, separando le istruzioni dal latch se necessario
     }
 
     bool changed =
