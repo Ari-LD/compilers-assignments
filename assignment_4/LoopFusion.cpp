@@ -283,14 +283,22 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @return true
    * @return false
    */
+   /*
+    La funzione determina se le istruzioni che si trovano tra due loop L1 e L2 possono essere spostate fuori dalla loro posizione attuale,
+     per rendere i loop adiacenti e quindi fusibili.
+    Il problema: per fondere L1 e L2, non ci deve essere nulla in mezzo. Se c'è del codice intermedio, 
+    va spostato o prima di L1 o dopo L2. Se anche una sola istruzione non è spostabile né da un lato né dall'altro, la fusione non è fattibile.
+   */
   bool canMoveInstructionsInBetweenLoops(
       Loop *L1, Loop *L2, BasicBlock *ExitL1, BranchInst *BI1,
       SetVector<Instruction *> &toMoveBeforeL1,
       SetVector<Instruction *> &toMoveAfterL2, BasicBlock *EntryL2 = nullptr,
-      BranchInst *BI2 = nullptr) {
+      BranchInst *BI2 = nullptr) {  //Gli passo l'exit block del primo loop e l'entry block del secondo loop, così da poter controllare le istruzioni tra i due loop
 
+    // salvo tutte le istruzioni tra i due loop in un vettore, così da poterle controllare una ad una
     std::vector<Instruction *> toCheckForCodeMotion;
 
+    // controllo le istruzioni nel blocco di uscita del primo loop, escludendo le PHI nodes, il branch e le istruzioni di debug
     for (Instruction &I : *ExitL1) {
       if (!isa<PHINode>(&I) && &I != BI1 && !isa<DbgInfoIntrinsic>(&I)) {
         toCheckForCodeMotion.push_back(&I);
@@ -301,6 +309,11 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     // before calling this function, if they're equal then I don't give EntryL2
     // as a parameter and it will be nullptr meaning I just need to check that
     // instead (should be equivalent either way)
+
+    /* Faccio la stessa cosa per il blocco di entrata del secondo loop, escludendo le PHI nodes, il branch e le istruzioni di debug.
+    Non controllo che EntryL2 sia diverso da ExitL1 perché lo faccio in areAdjacent prima di chiamare questa funzione, 
+    se sono uguali allora non passo EntryL2 come parametro e sarà nullptr, quindi controllerò solo quello (dovrebbe essere equivalente in entrambi i casi)
+    */
     if (EntryL2 != nullptr && EntryL2 != L2->getHeader()) {
       for (Instruction &I : *EntryL2) {
         if (!isa<PHINode>(&I) && &I != BI2 && !isa<DbgInfoIntrinsic>(&I)) {
@@ -309,24 +322,33 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
       }
     }
 
+    // controllo ogni istruzione tra i due loop per vedere se può essere spostata prima di L1 o dopo L2, o se non può essere spostata affatto
     for (Instruction *I : toCheckForCodeMotion) {
+      // inizializzo due booleani per tenere traccia se l'istruzione deve essere spostata prima di L1 o dopo L2
       bool neededBeforeL1 = false;
       bool neededAfterL2 = false;
 
+      // se l'istruzione ha side effects o legge/scrive in memoria, non può essere spostata
       if (I->mayHaveSideEffects() || I->mayReadOrWriteMemory()) {
         return false;
       }
       // checks if the instruction is needed after L2
       // if it is then we are forced to move it before L1
+
+      // Se il risultato di I è usato dentro L2 -> L'istruzione deve essere disponibile prima che L2 inizi -> va messa prima di L1 (che precede L2).
       if (isUsedInLoop(I, L2, false))
         neededBeforeL1 = true;
 
       // checks that the instruction is using something from the previous loop,
       // L1, if it is then we are forced to move it after L2
+
+      // Se un operando di I è definito dentro L1 -> L'istruzione dipende da un valore prodotto da L1, 
+      // quindi può essere eseguita solo dopo che L1 termina -> va messa dopo L2.
       for (Value *Op : I->operands()) {
         if (isDefinedInLoop(Op, L1))
           neededAfterL2 = true;
-        // instructions dependent on each other must be on the same side
+        // Propagazione delle dipendenze tra istruzioni intermedie: se I dipende da un'altra istruzione già classificata come "va dopo L2",
+        // allora anche I deve andare dopo L2 (e viceversa). Serve a mantenere la coerenza dell'ordine tra istruzioni che dipendono l'una dall'altra.
         else if (auto *OpInst = dyn_cast<Instruction>(Op)) {
           if (toMoveAfterL2.count(OpInst))
             neededAfterL2 = true;
@@ -335,6 +357,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
         }
         // edge case, the instruction could be using a phi node contained within
         // the same block, so we cannot move the instruction safely
+        // Edge case: se I usa un PHINode dello stesso blocco, non si può spostare perché il PHI è legato alla struttura del blocco corrente.
         else if (auto phiInstr = dyn_cast<PHINode>(Op)) {
           if (phiInstr->getParent() == I->getParent()) {
             return false;
@@ -355,9 +378,24 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
       // single true bool, and if there are no dependencies from either side
       // then both would be false requiring a fourth check,/ this way we use
       // boolean logic to save a needless check
+
+      // Se si scopre che dobbiamo spostare l'istruzione sia dopo L2 che
+      // prima di L1 a causa delle sue dipendenze, allora non possiamo spostarla affatto.
+      // Se troviamo anche solo un'istruzione che non può essere spostata, possiamo
+      // fermarci del tutto, poiché la fusione dei cicli non sarà fattibile a meno che non vengano spostate tutte le
+      // istruzioni. Abbiamo deciso di inizializzare i booleani come true e
+      // renderli false nel codice precedente per evitare un controllo if. Inizializzandoli
+      // come true e rendendoli false in tali condizioni, possiamo semplicemente
+      // controllare quando ci sono dipendenze da entrambi i cicli e poi solo
+      // da uno dei due. Invece di partire da false -> true, avremmo avuto questo
+      // controllo con entrambi come true, i controlli per entrambi singolarmente come
+      // singolo booleano true, e se non ci sono dipendenze da nessuno dei due lati
+      // allora entrambi sarebbero false, richiedendo un quarto controllo. In questo modo utilizziamo
+      // la logica booleana per evitare un controllo superfluo.
       if (neededBeforeL1 && neededAfterL2)
         return false;
 
+      // Altrimenti si inserisce l'istruzione nel set appropriato. Il default (nessuna dipendenza da nessun loop) è spostarla prima di L1, scelta conservativa.
       if (neededBeforeL1)
         toMoveBeforeL1.insert(I);
       else if (neededAfterL2)
@@ -410,9 +448,13 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @return false
    */
   bool hasSameTripCount(Loop *L1, Loop *L2) {
+    // Ottengo le SCEV (Scalar Evolution Expressions) che rappresentano il numero di iterazioni dei loop L1 e L2, 
+    // grazie alla mappa loopsTripCountMap che associa ogni loop alla sua SCEV.
     const SCEV *TC1 = loopsTripCountMap[L1];
     const SCEV *TC2 = loopsTripCountMap[L2];
 
+    // Se una delle due SCEV non può essere calcolata (ad esempio, se il numero di iterazioni non è determinabile staticamente), 
+    // ritorno false, indicando che non possiamo garantire che i due loop abbiano lo stesso numero di iterazioni.
     if (isa<SCEVCouldNotCompute>(TC1) || isa<SCEVCouldNotCompute>(TC2)) {
       return false;
     }
@@ -434,13 +476,17 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
   bool areControlFlowEquivalent(Loop *L1, Loop *L2, DominatorTree &DT,
                                 PostDominatorTree &PDT) {
 
+    // Ottengo i blocchi di ingresso dei due loop. Questi blocchi rappresentano il punto in cui l'esecuzione entra nel loop.
     auto Pre1 = getLoopEntry(L1);
     auto Pre2 = getLoopEntry(L2);
 
+    // Se uno dei due blocchi di ingresso non esiste, ritorno false, indicando che i loop non sono equivalenti dal punto di vista del flusso di controllo.
     if (!Pre1 || !Pre2) {
       return false;
     }
 
+    // Controllo se Pre1 domina Pre2 e se Pre2 domina Pre1 (post dominanza). 
+    // Se entrambe le condizioni sono vere, significa che i due blocchi di ingresso sono equivalenti dal punto di vista del flusso di controllo.
     return (DT.dominates(Pre1, Pre2) && PDT.dominates(Pre2, Pre1));
   }
 
@@ -543,10 +589,10 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
       // Se gli stride sono uguali (stessi pattern di accesso),
       // la dipendenza è determinata interamente dalla differenza degli start.
       // RAW: L1 scrive start1+i, L2 legge start2+i.
-      //      Se start2 > start1 → L2 legge avanti rispetto a L1
-      //      → dipendenza loop-carried negativa → blocca.
+      //      Se start2 > start1 -> L2 legge avanti rispetto a L1
+      //      -> dipendenza loop-carried negativa -> blocca.
       // WAR: L1 legge start1+i, L2 scrive start2+i.
-      //      Se start1 > start2 → L1 legge avanti rispetto a L2 → blocca.
+      //      Se start1 > start2 -> L1 legge avanti rispetto a L2 -> blocca.
       if (Stride1 && Stride2 && Stride1 == Stride2) {
         const SCEV *diffStart = isRAW
             ? SE.getMinusSCEV(Start2, Start1)
@@ -573,9 +619,14 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @return true
    * @return false
    */
+   // La funzione verifica se ci sono dipendenze scalari tra due loop L1 e L2. 
+   // In altre parole, controlla se qualche istruzione in L1 produce un valore che viene utilizzato in L2. 
+   // Se esiste almeno una tale dipendenza, la funzione restituisce true, 
+   // indicando che i loop non possono essere fusi senza rischiare di alterare il comportamento del programma.
   bool hasScalarDependencies(Loop *L1, Loop *L2) {
     for (BasicBlock *BB : L1->getBlocks()) {
       for (Instruction &I : *BB) {
+        // Controlla se l'istruzione I è utilizzata in L2. Se sì, significa che c'è una dipendenza scalare tra L1 e L2.
         if (isUsedInLoop(&I, L2, false))
           return true;
       }
@@ -583,7 +634,17 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     return false;
   }
 
+  /*
+  * @brief checks if a loop is a do-while loop
+  *
+  * @param L1
+  * @return true
+  * @return false
+  */
   bool isLoopDoWhile(Loop *L1) {
+    // Controllo che il terminatore del blocco header del loop sia un'istruzione di branch.
+    // Se sì, verifico se il numero di successori del branch è minore o uguale a 1. 
+    // Poichè un do-while loop ha un solo percorso di uscita, se il numero di successori è 1 o meno, allora il loop è considerato un do-while.
     if (auto branchHeader =
             dyn_cast<BranchInst>(L1->getHeader()->getTerminator()))
       return branchHeader->getNumSuccessors() <= 1;
@@ -598,12 +659,17 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @param OldPred
    * @param NewPred
    */
+   // La funzione aggiorna i nodi PHI in un blocco di base (TargetBB) sostituendo il predecessore OldPred con il nuovo predecessore NewPred.
+   // lo faccio perchè quando fonderò due loop, i blocchi che prima puntavano al latch del secondo loop dovranno ora puntare al latch del primo loop, 
+   // quindi devo aggiornare i PHI nodes di conseguenza.
   void updatePhiNodes(BasicBlock *TargetBB, BasicBlock *OldPred,
                       BasicBlock *NewPred) {
+    // Itero su tutti i nodi PHI nel blocco di base TargetBB.
     for (PHINode &PN : TargetBB->phis()) {
+      // Ottengo l'indice del blocco OldPred nel nodo PHI. Se OldPred non è un predecessore del nodo PHI, l'indice sarà negativo.
       int blockIndex = PN.getBasicBlockIndex(OldPred);
       if (blockIndex >= 0) {
-        PN.setIncomingBlock(blockIndex, NewPred);
+        PN.setIncomingBlock(blockIndex, NewPred); // Sostituisco il predecessore OldPred con NewPred nel nodo PHI.
       }
     }
   }
@@ -617,7 +683,17 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @return true
    * @return false
    */
+   /*IN GENERALE:
+   Intanto la nostra fusione consiste idealmente nel prendere il body del primo loop, farlo puntare al body del secondo loop, poi far puntare il body del secondo loop
+   al latch del primo loop ed eliminare i blocchi morti del secondo e aggiornare i blocchi del primo.
+
+   fuseLoops esegue la fusione fisica di due loop L1 e L2 nell'IR di LLVM. 
+   Dopo che tutte le verifiche di fattibilità sono state superate (trip count uguale, adiacenza, dipendenze ok), 
+   ricollega i BasicBlock, aggiorna i PHI node, e aggiorna la struttura di LoopInfo
+   */
   bool fuseLoops(Loop *L1, Loop *L2, LoopInfo &LI) {
+    // Ottengo i blocchi di intestazione, i latch e le variabili di induzione dei due loop L1 e L2.
+    // le variabili di induzione sono le variabili che vengono incrementate ad ogni iterazione del loop e determinano il numero di iterazioni del loop stesso.
     auto L1Header = L1->getHeader();
     auto L1HeaderTerminator = L1Header->getTerminator();
     auto L1InductionVar = L1->getCanonicalInductionVariable();
@@ -631,31 +707,55 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     auto L2InductionVar = L2->getCanonicalInductionVariable();
     auto L2Latch = L2->getLoopLatch();
 
+    // Controllo se le variabili di induzione dei due loop sono valide. 
+    // Se una delle due non è valida, stampo un messaggio di errore e ritorno false,
+    //  indicando che la fusione dei loop non può essere eseguita.
     if (!L1InductionVar || !L2InductionVar) {
       outs() << "Induction not found\n";
       return false;
     }
 
+    // Salvo i predecessori dei latch dei due loop in due vettori separati. Così posso aggiornare i loro successori più tardi, quando fonderò i loop.
     std::vector<BasicBlock *> L1LatchPreds(predecessors(L1Latch).begin(),
                                            predecessors(L1Latch).end());
     std::vector<BasicBlock *> L2LatchPreds(predecessors(L2Latch).begin(),
                                            predecessors(L2Latch).end());
 
+
+    // Ottengo il blocco di base che rappresenta l'inizio del corpo del secondo loop (L2).
+    // L'header di un loop ha due successori: il body e il blocco di uscita. Questo codice identifica quale dei due è il body, 
+    // indipendentemente dall'ordine in cui LLVM li ha messi (il branch può essere true=body/false=exit o viceversa).
     BasicBlock *L2BodyEntry =
-        (L2HeaderTerminator->getSuccessor(0) == L2ExitBlock)
+        (L2HeaderTerminator->getSuccessor(0) == L2ExitBlock)  // Se il primo successore del terminatore dell'header di L2 è il blocco di uscita di L2, allora il corpo del loop inizia con il secondo successore, altrimenti inizia con il primo successore.
             ? L2HeaderTerminator->getSuccessor(1)
             : L2HeaderTerminator->getSuccessor(0);
 
     // we manage the phi nodes present in the second header and the induction
     // var make_early_inc_range increments before, so we are sure to not
     // invalidate the pointer
+
+    /*
+    I PHI node dell'header di L2 devono essere gestiti caso per caso.
+    Gestisco i nodi PHI presenti nell'header del secondo loop (L2).
+    Uso make_early_inc_range per iterare sui nodi PHI, in modo da non invalidare il puntatore durante la rimozione dei nodi PHI.
+    make_early_inc_range incrementa l'iteratore prima di processare l'elemento corrente, rendendo sicura la rimozione durante l'iterazione.
+    */
     for (PHINode &PN : llvm::make_early_inc_range(L2Header->phis())) {
+      /*
+       Se il nodo PHI corrente è la variabile di induzione del secondo loop, lo sostituisco con la variabile di induzione del primo loop (L1) e lo rimuovo.
+       L2 non ha più bisogno di una propria induction variable: tutti i suoi usi vengono rimpiazzati con quella di L1, poi il PHI viene eliminato.
+      */
       if (&PN == L2InductionVar) {
         // induction var is replace by the one in the first loop
         PN.replaceAllUsesWith(L1InductionVar);
         PN.eraseFromParent();
       } else {
         // other phi nodes are moved in L1Header after the others
+        /*
+             Gli altri PHI node vengono spostati fisicamente nell'header di L1. 
+             I loro incoming block vanno aggiornati: il predecessore che era L2EntryBlock diventa L1EntryBlock, 
+             e quello che era L2Latch diventa L1Latch, perché ora il ciclo passa dal latch di L1.
+        */
         Instruction *InsertPt = L1Header->getFirstNonPHI();
         PN.moveBefore(InsertPt);
 
@@ -672,6 +772,11 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     }
 
     // the exit block of L1 is now the exit block of L2
+    /*
+      L'header di L1 non deve più saltare al proprio exit block (che sparisce nella fusione), 
+      ma all'exit block di L2 — che diventa l'unico exit del loop fuso. Si aggiornano anche i PHI node del nuovo exit block: 
+      chi riceveva valori da L2Header ora li riceve da L1Header.
+    */
     if (L1HeaderTerminator->getSuccessor(0) == L1ExitBlock) {
       L1HeaderTerminator->setSuccessor(0, L2ExitBlock);
     } else {
@@ -680,6 +785,12 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     updatePhiNodes(L2ExitBlock, L2Header, L1Header);
 
     // the blocks in L1 that pointed to the L1 Latch now go to the body of L2
+
+    /*
+    Ora collego il body del loop 1 al body del loop 2
+    I blocchi del body di L1 che prima saltavano al latch di L1 (fine iterazione) ora saltano al body entry di L2. 
+    In questo modo le due sequenze di body vengono concatenate in serie.
+    */
     for (BasicBlock *PredL1 : L1LatchPreds) {
       auto predTerminator = PredL1->getTerminator();
       for (unsigned i = 0; i < predTerminator->getNumSuccessors(); i++) {
@@ -691,6 +802,11 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     }
 
     // the blocks in L2 that pointed to the L2 Latch now go to the Latch of L1
+    /*
+      Collego il body di L2 al latch di L1.
+      Simmetrico al passo precedente: i blocchi di L2 che puntavano al latch di L2 ora puntano al latch di L1, che è il latch del loop fuso. 
+      I PHI node del latch di L1 vengono aggiornati per accettare i nuovi predecessori.
+    */
     for (BasicBlock *PredL2 : L2LatchPreds) {
       auto predTerminator = PredL2->getTerminator();
       for (unsigned i = 0; i < predTerminator->getNumSuccessors(); i++) {
@@ -702,6 +818,9 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
         }
       }
     }
+
+    //Se L2 conteneva loop annidati, questi vengono trasferiti a L1 nella struttura di LoopInfo. 
+    // Senza questo passo la gerarchia dei loop sarebbe corrotta.
     std::vector<Loop *> SubLoops = L2->getSubLoopsVector();
 
     // should manage the subloops
@@ -712,6 +831,10 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
 
     /* Should move blocks that belong to L2 to L1, except the header and the
      latch */
+     /*
+      Tutti i blocchi di L2 (esclusi header e latch, che vengono abbandonati) vengono spostati formalmente dentro L1 nella struttura di LoopInfo. 
+      Il CFG è già stato ricablato nei passi precedenti; questo aggiorna solo i metadati.
+     */
     std::vector<BasicBlock *> blocksToMove(L2->block_begin(), L2->block_end());
     for (BasicBlock *BB : blocksToMove) {
       if (BB != L2Header && BB != L2Latch) {
@@ -720,6 +843,8 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
       }
     }
 
+    // L2 non esiste più come loop: viene rimosso dal suo parent (che sia il top-level o un loop esterno). 
+    // Dopo questo punto L2 è un oggetto orfano che verrà deallocato da LLVM.
     if (Loop *ParentLoop = L2->getParentLoop())
       ParentLoop->removeChildLoop(L2);
 
@@ -735,6 +860,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @return true
    * @return false
    */
+   // Un Loop Guarded ha un branch prima del preheader che salta il loop intero se il trip count è zero
   bool fuseGuardedLoops(Loop *L1, Loop *L2, LoopInfo &LI) {
     auto L1Header = L1->getHeader();
     auto L1Latch = L1->getLoopLatch();
@@ -745,6 +871,8 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     auto L2Latch = L2->getLoopLatch();
     auto L2Preheader = L2->getLoopPreheader();
     auto L2InductionVar = L2->getCanonicalInductionVariable();
+
+    //Guardia
     auto L2GuardBr = L2->getLoopGuardBranch();
     auto L2GuardBB = L2GuardBr->getParent();
 
@@ -753,7 +881,11 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
       return false;
     }
 
+    
     // the exit of the second loop guard
+    /*L2BodyEntry = L2Header invece di calcolare il successore dell'header. 
+    Nei loop guardati l'header è già il primo blocco del body (non c'è un check di condizione separato nell'header come nei loop normali).
+    */
     BasicBlock *L2Bypass = (L2GuardBr->getSuccessor(0) == L2Preheader)
                                ? L2GuardBr->getSuccessor(1)
                                : L2GuardBr->getSuccessor(0);
@@ -792,13 +924,19 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     }
 
     // blocks pointing to the L2 Guard now point to the exit
+    /*Rimuovo la guardia:
+      Il guard di L2 viene bypassato completamente: chi ci puntava ora va direttamente a L2Bypass. 
+      Il check non serve più perché L1 ha già le stesse condizioni (trip count uguale).
+      PHI node: entryIdx usa L2Preheader invece di L2EntryBlock come incoming block da rimpiazzare con L1Preheader.
+      Migrazione blocchi: esclude anche L2GuardBB e L2Preheader (oltre al latch) dal trasferimento a L1.
+    */
     std::vector<BasicBlock *> L2GuardPreds(predecessors(L2GuardBB).begin(),
                                            predecessors(L2GuardBB).end());
     for (BasicBlock *Pred : L2GuardPreds) {
       auto *Term = Pred->getTerminator();
       for (unsigned i = 0; i < Term->getNumSuccessors(); i++) {
         if (Term->getSuccessor(i) == L2GuardBB) {
-          Term->setSuccessor(i, L2Bypass);
+          Term->setSuccessor(i, L2Bypass);  // chi puntava al guard ora bypassa
           updatePhiNodes(L2Bypass, L2GuardBB, Pred);
         }
       }
@@ -865,20 +1003,23 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @return true
    * @return false
    */
+   // Un loop do-while non ha un header con branch condizionale all'ingresso — il check è nel latch
   bool fuseDoWhile(Loop *L1, Loop *L2, LoopInfo &LI) {
     auto L1Header = L1->getHeader();
     auto L1Latch = L1->getLoopLatch();
     auto L1Preheader = L1->getLoopPreheader();
     auto L1InductionVar = L1->getCanonicalInductionVariable();
+
+    // Ottengo il branch del latch di L1, che è dove avviene il check della condizione del loop do-while.
     auto L1LatchBr = dyn_cast<BranchInst>(L1Latch->getTerminator());
 
     auto L2Header = L2->getHeader();
     auto L2Latch = L2->getLoopLatch();
     auto L2Preheader = L2->getLoopPreheader();
     auto L2InductionVar = L2->getCanonicalInductionVariable();
+
+    // Ottengo il branch del latch di L2, che è dove avviene il check della condizione del loop do-while.
     auto L2LatchBr = dyn_cast<BranchInst>(L2Latch->getTerminator());
-    // auto L2GuardBr = L2->getLoopGuardBranch();
-    // auto L2GuardBB = L2GuardBr->getParent();
 
     if (!L1InductionVar || !L2InductionVar) {
       outs() << "Induction not found\n";
@@ -886,6 +1027,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     }
 
     // the exit of the second loop guard
+    //  L2Bypass calcolato dal latch di L2, non dal guard: Il successore del latch che non è l'header è l'uscita del loop.
     BasicBlock *L2Bypass = (L2LatchBr->getSuccessor(0) == L2Header)
                                ? L2LatchBr->getSuccessor(1)
                                : L2LatchBr->getSuccessor(0);
@@ -924,6 +1066,12 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     }
 
     // the exit block of L1 is now the exit block of L2
+    /*
+      Redirect dell'exit tramite il latch di L1, non l'header: 
+      Nei do-while è il latch che decide se continuare o uscire, quindi è lì che va aggiornato il successore di uscita, non nell'header come in fuseLoops.
+      Nessun guard block da eliminare -> i do-while non hanno guard.
+      Migrazione blocchi: esclude solo L2Latch e L2Preheader, non un L2GuardBB
+    */
     if (L1LatchBr->getSuccessor(0) == L1Header) {
       L1LatchBr->setSuccessor(1, L2Bypass);
     } else {
@@ -979,7 +1127,6 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     if (Loop *ParentLoop = L2->getParentLoop())
       ParentLoop->removeChildLoop(L2);
 
-    //LI.erase(L2);
     return true;
   }
   /**
@@ -1052,6 +1199,8 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
       Loop *baseLoop = group[baseIndex];
       Loop *nextLoop = group[baseIndex + 1];
 
+      //Applico i controlli per vedere se posso fondere i due loop, se uno dei controlli fallisce passo alla coppia successiva
+
       if (!hasSameTripCount(baseLoop, nextLoop)) {
         outs() << "Failed : Could not compute or different trip counts\n";
         baseIndex++;
@@ -1080,6 +1229,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
         continue;
       }
 
+      //CONTROLLO EXTRA
       // se sono adiacenti e ci sono istruzioni da spostare, le sposto 
       if (!toMoveAfterL2.empty() || !toMoveBeforeL1.empty()) {
         moveInstructionsInBetweenLoops(baseLoop, nextLoop, toMoveBeforeL1,
@@ -1147,10 +1297,12 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @param DT
    * @param LI
    */
-   //toglie le istruzioni dal latch (anche la compare nel caso do while) se non sono il terminatore, così da evitare che vengano spostate dopo il secondo loop
+   //toglie le istruzioni dal latch (anche la compare(icmp) nel caso do while) se non sono il terminatore, così da evitare che vengano spostate dopo il secondo loop
   void prepareLoopLatch(Loop *L, DominatorTree &DT, LoopInfo &LI) { 
     auto latch = L->getLoopLatch();
     auto header = L->getHeader();
+
+    // Se il latch è l'header o ha più di 2 istruzioni, significa che ci sono istruzioni tra il latch e il terminatore, quindi le separo in un nuovo blocco
     if (latch == header || latch->size() > 2) {
       // latch terminator is inserted in a different block
       latch = SplitBlock(latch, latch->getTerminator(), &DT, &LI);
@@ -1158,6 +1310,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
   }
 
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM) {
+    //Mi prendo gli handle delle analisi che mi servono per fare la fusione dei loop
     LoopInfo &LI = AM.getResult<LoopAnalysis>(F);
     ScalarEvolution &SE = AM.getResult<ScalarEvolutionAnalysis>(F);
     DominatorTree &DT = AM.getResult<DominatorTreeAnalysis>(F);
@@ -1165,7 +1318,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
 
     // LI.getLoopsInPreorder() scorre tutti i loop in preorder, così da processare prima i loop esterni e poi quelli interni, anche se ci basta un qualsiasi ordine
     for (auto L : LI.getLoopsInPreorder()) {
-      if (!L->isLoopSimplifyForm()) //loop in forma semplificata, sottoinsieme dei loop naturali, che hanno preheader e latch univoci, e sono più facili da gestire
+      if (!L->isLoopSimplifyForm()) //loop in forma semplificata, sottoinsieme dei loop naturali, che hanno preheader e latch univoci e hanno uscite dedicate, e sono più facili da gestire
         continue;
       auto backedgeLoop = SE.getBackedgeTakenCount(L); // calcolo tutti i trip count dei loop prima di iniziare la fusione, così da non invalidare le SCEV durante la fusione
       loopsTripCountMap[L] = backedgeLoop;  //salva il trip count del loop in una mappa, così da poterlo usare per confrontarlo con altri loop
