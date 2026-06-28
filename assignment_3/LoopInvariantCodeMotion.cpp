@@ -40,6 +40,7 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
    * @return false
    */
   bool isDeadAfterLoop(Instruction *I, Loop *LL) {
+    //scorro gli usi dell'istruzione e prendo il basic block dell'istruzione che ha l'uso
     for (User *U : I->users()) {
       Instruction *userInst = cast<Instruction>(U);
       BasicBlock *userBB = userInst->getParent();
@@ -64,12 +65,12 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
    */
   bool dominatesExits(Instruction *I, Loop *LL, DominatorTree &DT) {
     SmallVector<BasicBlock *> exitBlocks;
-    LL->getExitBlocks(exitBlocks);
+    LL->getExitBlocks(exitBlocks);  //torna gli exit block
 
     bool dominates = true;
 
-    for (auto exitBlock : exitBlocks) {
-      if (!DT.dominates(I->getParent(), exitBlock)) {
+    for (auto exitBlock : exitBlocks) { //scorro gli exit block
+      if (!DT.dominates(I->getParent(), exitBlock)) { //controllo che il BB dell'istruzione domina ogni uscita, se non ne domina anche solo una, fallisce 
         dominates = false;
         break;
       }
@@ -101,6 +102,8 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
   }
 
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM) {
+    
+    //Mi salvo gli handle delle varie analisi
 
     LoopInfo &LI = AM.getResult<LoopAnalysis>(F);
     DominatorTree &DT = AM.getResult<DominatorTreeAnalysis>(F);
@@ -115,7 +118,8 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
       if (!LL->isLoopSimplifyForm())
         continue;
 
-        /* SCEV permette di sapere quante volte itero un loop, e se è = 0 non ha senso ottimizzarlo poichè non ci entriamo
+        /* 
+          SCEV permette di sapere quante volte itero un loop, e se è = 0 non ha senso ottimizzarlo poichè non ci entriamo
         */
       SCEV const *backEdgeCount = SE.getBackedgeTakenCount(LL);
       if (const SCEVConstant *tripCount =
@@ -124,10 +128,12 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
           continue;
       }
 
+      //creo 2 set per ordine così è più pulito, per le invarianti e per quelle da muovere nel pre-header 
       std::unordered_set<Instruction *> invariantSet;
       std::vector<Instruction *> toMove;
 
-      /* ti ritorna i blocchi dentro ad un loop in reverse post order, così da visitare tutti i predecessori prima di visitare un blocco
+      /* 
+      ti ritorna i blocchi dentro ad un loop in reverse post order, così da visitare tutti i predecessori prima di visitare un blocco
       */
       LoopBlocksRPO LBRPO(LL);
       LBRPO.perform(&LI);
@@ -136,6 +142,7 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
       for (BasicBlock *BB : LBRPO) {
         for (Instruction &I : *BB) {
           // le istruzioni che hanno side effetcs non sono invariant
+          if(I.mayHaveSideEffects())
             continue;
 
           // le PHI e le Br non sono invariant
@@ -150,7 +157,8 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
 
           bool isInvariant = true;
 
-          for (Use &Op : I.operands()) {
+          //scorro gli operandi dell'istruzione
+          for (Use &Op : I.operands()) {  
             Value *operandValue = Op.get();
 
             if (auto *op_instr = dyn_cast<Instruction>(operandValue)) { //provo a castarlo ad instruction, se non lo è vuol dire che è costante quindi invariant
@@ -169,14 +177,17 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
       }
 
       // Code Motion
+      // altro set per le istruzioni che sono state già spostate, così da non spostarle più volte
       std::unordered_set<Instruction *> isMoved;
 
       for (BasicBlock *BB : LBRPO) {
         for (Instruction &I : *BB) {
-
+          // controllo che l'istruzione sia invariant e che domini tutti gli exit block o che sia dead dopo il loop
           if (invariantSet.count(&I) > 0 &&
-              (dominatesExits(&I, LL, DT) || isDeadAfterLoop(&I, LL))) {
-            bool depsMoved = true;
+              (dominatesExits(&I, LL, DT) || isDeadAfterLoop(&I, LL))) {  
+                // controllo che tutte le dipendenze dell'istruzione siano già state spostate, così da non spostare un'istruzione prima di aver spostato le sue dipendenze
+                // quindi itero sugli operandi dell'istruzione e controllo se sono già stati spostati, se non lo sono vuol dire che non posso spostare l'istruzione
+                bool depsMoved = true;
             for (Use &Op : I.operands()) {
               if (auto *op_instr = dyn_cast<Instruction>(Op.get())) {
                 if (LL->contains(op_instr->getParent()) &&
@@ -186,7 +197,7 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
                 }
               }
             }
-
+            // se tutte le dipendenze sono state spostate, allora posso spostare l'istruzione
             if (depsMoved) {
               toMove.push_back(&I);
               isMoved.insert(&I);
@@ -195,6 +206,7 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
         }
       }
 
+      //prendo il pre header e il suo terminatore poichè voglio spostare le istruzioni prima del terminatore e nel pre header
       auto preheader = LL->getLoopPreheader();
       auto lastInstr = preheader->getTerminator();
 
