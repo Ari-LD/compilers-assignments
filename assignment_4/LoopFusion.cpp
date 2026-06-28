@@ -184,38 +184,55 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @return true
    * @return false
    */
+   /*
+   La funzione verifica se due loop L1 e L2 sono adiacenti, cioè se non ci sono basic block "di mezzo" con istruzioni non spostabili. 
+   Se ci sono istruzioni mobili tra i loop, le raccoglie in toMoveBeforeL1 o toMoveAfterL2 per poterle spostare in seguito (prerequisito per la loop fusion).
+   */
   bool areAdjacent(Loop *L1, Loop *L2, SetVector<Instruction *> &toMoveBeforeL1,
                    SetVector<Instruction *> &toMoveAfterL2) {
+
+    /*
+        Recupera l'exit block di L1 e l'entry block di L2. Pulisce i set di istruzioni da spostare. 
+    */
     BasicBlock *ExitL1 = getLoopExit(L1);
     BasicBlock *EntryL2 = getLoopEntry(L2);
     toMoveBeforeL1.clear();
     toMoveAfterL2.clear();
-
+    
+    //Controlla se L1 è guarded (ha un branch condizionale che protegge l'ingresso al loop).
     bool isGuarded = L1->isGuarded();
 
+    //Se uno dei due blocchi non esiste -> impossibile procedere.
     if (!ExitL1 || !EntryL2)
       return false;
 
     // both must be guarded or unguarded
+    //Entrambi i loop devono essere dello stesso tipo (entrambi guarded o entrambi no).
     if (isGuarded != L2->isGuarded())
       return false;
 
     // if guarded, both must be equivalent
+    //Se guarded, le condizioni di guardia devono essere equivalenti (altrimenti la fusion cambierebbe la semantica).
     if (isGuarded && !areConditionsEquivalent(L1->getLoopGuardBranch(),
                                               L2->getLoopGuardBranch())) {
       return false;
     }
 
+    //Il terminatore dell'exit block deve essere un BranchInst. Se non lo è (es. è un ReturnInst), i loop non sono fusibili.
     BranchInst *BI1 = dyn_cast<BranchInst>(ExitL1->getTerminator());
 
     if (!BI1)
       return false;
 
     // first case, exit and entry correspond
+    // Caso 1: Exit di L1 coincide con Entry di L2
     if (ExitL1 == EntryL2) {
 
       // if there's an instruction or more between the loops, try to move
       // it/them
+      /*
+        Se il blocco condiviso è vuoto -> adiacenti subito. Se ha istruzioni -> prova a capire se sono spostabili. Se non lo sono -> non adiacenti.
+      */
       if (!isBlockEmpty(ExitL1, BI1, isGuarded)) {
         if (!canMoveInstructionsInBetweenLoops(L1, L2, ExitL1, BI1,
                                                toMoveBeforeL1, toMoveAfterL2)) {
@@ -231,12 +248,17 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     // second case, exit and entry do not correspond, but they could still be
     // adjacent if there aren't unmovable instructions in the middle
 
+    // Caso 2: Exit e Entry sono blocchi distinti
     BranchInst *BI2 = dyn_cast<BranchInst>(EntryL2->getTerminator());
-    if (!BI2 || !BI1->isUnconditional())
+    if (!BI2 || !BI1->isUnconditional())  //Per procedere, BI1 deve essere unconditional (L1 esce sempre nello stesso posto) e EntryL2 deve avere anch'esso un branch.
       return false;
 
     // a redundant "trampoline" block could be in the middle
-    BasicBlock *NextBB = BI1->getSuccessor(0);
+    /*
+      Controllo del "trampoline block": Potrebbe esserci un blocco intermedio vuoto ("trampoline") tra ExitL1 e EntryL2:
+      Questo è accettabile solo se NextBB ha un branch unconditional verso EntryL2 ed è completamente vuoto. Altrimenti -> non adiacenti.
+    */
+    BasicBlock *NextBB = BI1->getSuccessor(0);  //il successore del branch di ExitL1
     if (NextBB != EntryL2) {
       BranchInst *NextBI = dyn_cast<BranchInst>(NextBB->getTerminator());
       if (!NextBI || !NextBI->isUnconditional() ||
@@ -244,10 +266,15 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
           !isBlockEmpty(NextBB, NextBI, false)) {
         return false;
       }
-      // BI1->setSuccessor(0, EntryL2);
+      
     }
 
     // finally we check for instructions between ExitL1 and EntryL2
+    /*
+      Verifico che né ExitL1 né EntryL2 contengano istruzioni non spostabili. 
+      Nota che qui vengono passati entrambi i blocchi a canMoveInstructions, a differenza del caso 1 dove si passa solo ExitL1
+       perché ora i blocchi di mezzo sono due distinti.
+    */
     if (!isBlockEmpty(ExitL1, BI1, false) ||
         !isBlockEmpty(EntryL2, BI2, isGuarded)) {
       if (!canMoveInstructionsInBetweenLoops(L1, L2, ExitL1, BI1,
