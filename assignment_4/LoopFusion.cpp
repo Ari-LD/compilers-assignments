@@ -586,7 +586,8 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
         Start = il valore del puntatore alla prima iterazione (i=0)
         Stride = di quanto avanza il puntatore ad ogni iterazione
 
-        Per ogni coppia (I1 appartiene a L1, I2 appartiene a L2) che accede allo stesso array base, estraiamo la SCEV del puntatore di ciascuno e ne prendiamo start e stride:
+        Per ogni coppia (I1 appartiene a L1, I2 appartiene a L2) che accede allo stesso array base, estraiamo la SCEV del puntatore di ciascuno 
+        e ne prendiamo start e stride:
         c[i]   -> Start = c,    Stride = 4
         c[i+1] -> Start = c+4,  Stride = 4
         Se i due stride sono uguali (pattern di accesso identico, solo sfasati), la dipendenza è determinata interamente dalla differenza degli start:
@@ -780,7 +781,8 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
         // other phi nodes are moved in L1Header after the others
         /*
              Gli altri PHI node vengono spostati fisicamente nell'header di L1. 
-             I loro incoming block vanno aggiornati: il predecessore che era L2EntryBlock diventa L1EntryBlock, 
+             I loro incoming block (quelli del phi che mettono il valore dipendentemente da che blocco arrivi) vanno aggiornati: 
+             il predecessore che era L2EntryBlock diventa L1EntryBlock, 
              e quello che era L2Latch diventa L1Latch, perché ora il ciclo passa dal latch di L1.
         */
         Instruction *InsertPt = L1Header->getFirstNonPHI();
@@ -801,7 +803,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     // the exit block of L1 is now the exit block of L2
     /*
       L'header di L1 non deve più saltare al proprio exit block (che sparisce nella fusione), 
-      ma all'exit block di L2 — che diventa l'unico exit del loop fuso. Si aggiornano anche i PHI node del nuovo exit block: 
+      ma all'exit block di L2 -> che diventa l'unico exit del loop fuso. Si aggiornano anche i PHI node del nuovo exit block: 
       chi riceveva valori da L2Header ora li riceve da L1Header.
     */
     if (L1HeaderTerminator->getSuccessor(0) == L1ExitBlock) {
@@ -848,7 +850,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
 
     //Se L2 conteneva loop annidati, questi vengono trasferiti a L1 nella struttura di LoopInfo. 
     // Senza questo passo la gerarchia dei loop sarebbe corrotta.
-    std::vector<Loop *> SubLoops = L2->getSubLoopsVector();
+    std::vector<Loop *> SubLoops = L2->getSubLoopsVector(); // tutti i subloop di L2 vengono salvati in un vettore, poi vengono rimossi da L2 e aggiunti a L1.
 
     // should manage the subloops
     for (Loop *SubLoop : SubLoops) {
@@ -1000,15 +1002,19 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
       L1->addChildLoop(SubLoop);
     }
 
+    
     std::vector<BasicBlock *> blocksToMove;
     for (BasicBlock *BB : L2->getBlocks()) {
-      if (LI.getLoopFor(BB) == L2) {
+      if (LI.getLoopFor(BB) == L2) {  // prende solo i blocchi che appartengono a L2(lo hanno come padre), escludendo eventuali subloop, perchè li ho già spostati prima.
         blocksToMove.push_back(BB);
       }
     }
 
+    /*
+      Muovo i blocchi di L2 (esclusi L2Latch, L2Preheader e L2GuardBB) dentro L1 nella struttura di LoopInfo.
+    */
     for (BasicBlock *BB : blocksToMove) {
-      if (BB != L2Latch && BB != L2Preheader && BB != L2GuardBB) {
+      if (BB != L2Latch && BB != L2Preheader && BB != L2GuardBB) {  //
         L2->removeBlockFromLoop(BB);
         L1->addBasicBlockToLoop(BB, LI);
       }
@@ -1030,7 +1036,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @return true
    * @return false
    */
-   // Un loop do-while non ha un header con branch condizionale all'ingresso — il check è nel latch
+   // Un loop do-while non ha un header con branch condizionale all'ingresso -> il check è nel latch
   bool fuseDoWhile(Loop *L1, Loop *L2, LoopInfo &LI) {
     auto L1Header = L1->getHeader();
     auto L1Latch = L1->getLoopLatch();
