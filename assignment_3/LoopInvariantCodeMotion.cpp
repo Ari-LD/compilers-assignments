@@ -39,14 +39,29 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
    * @return true
    * @return false
    */
-  bool isDeadAfterLoop(Instruction *I, Loop *LL) {
-    //scorro gli usi dell'istruzione e prendo il basic block dell'istruzione che ha l'uso
-    for (User *U : I->users()) {
-      Instruction *userInst = cast<Instruction>(U);
-      BasicBlock *userBB = userInst->getParent();
 
-      if (!LL->contains(userBB)) {  //se l'uso non è dentro al loop vuol dire che è dopo quindi non è dead
+  bool isDeadAfterLoop(Instruction *I, DominatorTree &DT,
+                       SmallVector<BasicBlock *, 4> &ExitBlocks) {
+    // Scorriamo tutti gli users dell'istruzione
+    for (User *U : I->users()) {
+      Instruction *UseI = dyn_cast<Instruction>(U);
+
+      // Escludiamo il caso in cui sia un PHINode per semplificare le cose.
+      // Tuttavia si potrebbe controllare se il registro nel quale il PHINode
+      // inserisce il risultato è a sua volta deadAfterLoop, in quel caso
+      // potremmo spostare ritornare true
+      if (isa<PHINode>(UseI))
         return false;
+
+      if (UseI) {
+        BasicBlock *UseBB = UseI->getParent();
+
+        // Per ogni uscita, controlliamo se esiste almeno un caso dove questa
+        // domina il blocco dell'istruzione, in quel caso ritorniamo false
+        for (BasicBlock *Exit : ExitBlocks) {
+          if (DT.dominates(Exit, UseBB))
+            return false;
+        }
       }
     }
 
@@ -182,9 +197,12 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
 
       for (BasicBlock *BB : LBRPO) {
         for (Instruction &I : *BB) {
+          SmallVector<BasicBlock *, 4> ExitBlocks;
+          LL->getExitBlocks(ExitBlocks); //ritorna gli exit block del loop
           // controllo che l'istruzione sia invariant e che domini tutti gli exit block o che sia dead dopo il loop
           if (invariantSet.count(&I) > 0 &&
-              (dominatesExits(&I, LL, DT) || isDeadAfterLoop(&I, LL))) {  
+              (dominatesExits(&I, LL, DT) || isDeadAfterLoop(&I, DT, ExitBlocks))) {  
+                outs() << "Domina tutte le uscite:" <<dominatesExits(&I, LL, DT)<< " è dead after loop: " << isDeadAfterLoop(&I, DT, ExitBlocks) << "\n";
                 // controllo che tutte le dipendenze dell'istruzione siano già state spostate, così da non spostare un'istruzione prima di aver spostato le sue dipendenze
                 // quindi itero sugli operandi dell'istruzione e controllo se sono già stati spostati, se non lo sono vuol dire che non posso spostare l'istruzione
                 bool depsMoved = true;
