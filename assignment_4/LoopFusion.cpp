@@ -83,25 +83,47 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    * @return true
    * @return false
    */
-  bool areConditionsEquivalent(BranchInst *l1GuardCond,
+bool areConditionsEquivalent(ScalarEvolution &SE, BranchInst *l1GuardCond,
                                BranchInst *l2GuardCond) {
+
+    //prendo le condizioni dei due branch condizionali che proteggono i due loop. Se sono lo stesso oggetto, allora sono equivalenti.
 
     Value *Cond1 = l1GuardCond->getCondition();
     Value *Cond2 = l2GuardCond->getCondition();
 
-    // in case they share the same variable
     if (Cond1 == Cond2)
       return true;
 
-    if (auto *Inst1 = dyn_cast<Instruction>(Cond1)) {
-      if (auto *Inst2 = dyn_cast<Instruction>(Cond2)) {
-        return Inst1->isIdenticalTo(Inst2);
-      }
-    }
+    //casto le condizioni a ICmpInst (istruzioni di confronto intero). Se non sono confronti interi, ritorno false.
+    auto *Cmp0 = dyn_cast<ICmpInst>(Cond1); 
+    auto *Cmp1 = dyn_cast<ICmpInst>(Cond2);
+    if (!Cmp0 || !Cmp1)
+      return false;
+
+    /*
+    prendo l'operando sinistro e destro di ciascun confronto e li trasformo in SCEV (Scalar Evolution Expressions) per poterli confrontare.
+    */
+    const SCEV *LHS0 = SE.getSCEV(Cmp0->getOperand(0));
+    const SCEV *RHS0 = SE.getSCEV(Cmp0->getOperand(1));
+    const SCEV *LHS1 = SE.getSCEV(Cmp1->getOperand(0));
+    const SCEV *RHS1 = SE.getSCEV(Cmp1->getOperand(1));
+
+    //oltre agli operandi prendo l'operatore del confronto (es. <, >, ==) per poter confrontare anche quello.
+    auto Pred0 = Cmp0->getPredicate();
+    auto Pred1 = Cmp1->getPredicate();
+
+    if (Pred0 == Pred1 && LHS0 == LHS1 && RHS0 == RHS1)
+      return true;
+
+    /*
+    se le condizioni non sono equivalenti, provo a scambiare l'operatore del secondo confronto e a invertire gli operandi.
+    */
+    Pred1 = ICmpInst::getSwappedPredicate(Cmp1->getPredicate());
+    if (Pred0 == Pred1 && LHS0 == RHS1 && RHS0 == LHS1)
+      return true;
 
     return false;
   }
-
   /**
    * @brief checks if the block is empty (it contains only a branch or
    * if it has a comparison instruction for guarded loops
@@ -188,7 +210,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
    La funzione verifica se due loop L1 e L2 sono adiacenti, cioè se non ci sono basic block "di mezzo" con istruzioni non spostabili. 
    Se ci sono istruzioni mobili tra i loop, le raccoglie in toMoveBeforeL1 o toMoveAfterL2 per poterle spostare in seguito (prerequisito per la loop fusion).
    */
-  bool areAdjacent(Loop *L1, Loop *L2, SetVector<Instruction *> &toMoveBeforeL1,
+  bool areAdjacent(ScalarEvolution &SE, Loop *L1, Loop *L2, SetVector<Instruction *> &toMoveBeforeL1,
                    SetVector<Instruction *> &toMoveAfterL2) {
 
     /*
@@ -213,7 +235,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
 
     // if guarded, both must be equivalent
     //Se guarded, le condizioni di guardia devono essere equivalenti (altrimenti la fusion cambierebbe la semantica).
-    if (isGuarded && !areConditionsEquivalent(L1->getLoopGuardBranch(),
+    if (isGuarded && !areConditionsEquivalent(SE, L1->getLoopGuardBranch(),
                                               L2->getLoopGuardBranch())) {
       return false;
     }
@@ -1256,7 +1278,7 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
       SetVector<Instruction *> toMoveBeforeL1;
       SetVector<Instruction *> toMoveAfterL2;
 
-      if (!areAdjacent(baseLoop, nextLoop, toMoveBeforeL1, toMoveAfterL2)) {
+      if (!areAdjacent(SE,baseLoop, nextLoop, toMoveBeforeL1, toMoveAfterL2)) {
         outs() << "Failed: loops are not adjacent\n";
         baseIndex++;
         continue;
