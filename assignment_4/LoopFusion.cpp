@@ -1299,18 +1299,9 @@ struct LoopFusion : PassInfoMixin<LoopFusion> {
     }
   }
 
-  // Ricorsione sui figli: ricostruisci la lista figli da LI aggiornato
-  // Per ogni loop ancora valido in siblings, processa i suoi figli
-  std::vector<Loop *> currentTopLevel;
-  if (isTopLevel) {
-    for (Loop *L : LI) currentTopLevel.push_back(L);
-  } else {
-    currentTopLevel = siblings;
-  }
-
   //itero ricorsivamente sui figli dei loop, così da provare a fondere anche i loop interni
   bool childrenFused = false;
-  for (Loop *L : currentTopLevel) {
+  for (Loop *L : siblings) {
     std::vector<Loop *> children = L->getSubLoopsVector();  //loop interni al loop corrente
     if (children.size() >= 2) {
       if (processNestLevelLoops(children, DT, PDT, SE, LI, F, false)) {
