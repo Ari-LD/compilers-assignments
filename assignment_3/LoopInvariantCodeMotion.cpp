@@ -149,6 +149,7 @@ struct LoopInvariantCodeMotion : PassInfoMixin<LoopInvariantCodeMotion> {
 
       /* 
       ti ritorna i blocchi dentro ad un loop in reverse post order, così da visitare tutti i predecessori prima di visitare un blocco
+      così se visito prima i predecessori so che l'ordine delle istruzioni è giusto e che posso aggiungerle al set
       */
       LoopBlocksRPO LBRPO(LL);
       LBRPO.perform(&LI);

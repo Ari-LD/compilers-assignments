@@ -882,7 +882,7 @@ bool areConditionsEquivalent(ScalarEvolution &SE, BranchInst *l1GuardCond,
 
     /* Should move blocks that belong to L2 to L1, except the header and the
      latch */
-     /*
+     /* Spostamento fisico dei blocchi
       Tutti i blocchi di L2 (esclusi header e latch, che vengono abbandonati) vengono spostati formalmente dentro L1 nella struttura di LoopInfo. 
       Il CFG è già stato ricablato nei passi precedenti; questo aggiorna solo i metadati.
      */
