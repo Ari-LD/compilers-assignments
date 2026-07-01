@@ -568,6 +568,10 @@ bool areConditionsEquivalent(ScalarEvolution &SE, BranchInst *l1GuardCond,
    */
  bool hasNegativeDependencies(Loop *L1, Loop *L2, ScalarEvolution &SE) {
 
+  /*
+  controllo che le istruzioni siano istruzioni di memoria (load/store)
+  */
+
   std::vector<Instruction *> opsL1, opsL2;
 
   for (BasicBlock *BB : L1->getBlocks())
@@ -586,20 +590,29 @@ bool areConditionsEquivalent(ScalarEvolution &SE, BranchInst *l1GuardCond,
   for (Instruction *I1 : opsL1) {
     for (Instruction *I2 : opsL2) {
 
-      bool isWAR = I1->mayReadFromMemory() && I2->mayWriteToMemory();
-      bool isRAW = I1->mayWriteToMemory()  && I2->mayReadFromMemory();
-      bool isWAW = I1->mayWriteToMemory() && I2->mayWriteToMemory();
+      /*
+      Controllo i 3 casi principali che potrebbero causarmi problemi;
+
+      Il caso read after read non è un problema poichè anche se ci potrebbe essere dipendenza negativa, non ha impatto negativo sulla memoria poichè
+      non modifico niente, non è distruttivo, non sovrascrivo valori usati da altri.
+      */
+
+      bool isWAR = I1->mayReadFromMemory() && I2->mayWriteToMemory(); //il primo loop legge un valore che il secondo loop può sovrascrivere, quindi dipendenza negativa
+      bool isRAW = I1->mayWriteToMemory()  && I2->mayReadFromMemory();  // il secondo loop legge un valore che non è ancora stato scritto dal primo loop, quindi dipendenza negativa
+      bool isWAW = I1->mayWriteToMemory() && I2->mayWriteToMemory();  //il primo loop può sovrascrivere il valore scritto dal secondo loop, quindi dipendenza negativa
+
 
       if (!isWAR && !isRAW && !isWAW)
         continue;
 
+        //prendo gli operandi della mia istruzione che rappresentano i puntatori (quello che viene letto o scritto in memoria)
       Value *Ptr1 = getPointerOperand(I1);
       Value *Ptr2 = getPointerOperand(I2);
 
       if (!Ptr1 || !Ptr2)
         return true;
 
-      if (getUnderlyingObject(Ptr1) != getUnderlyingObject(Ptr2))
+      if (getUnderlyingObject(Ptr1) != getUnderlyingObject(Ptr2)) // controlla che sia lo stesso array, se non lo è allora non c'è dipendenza negativa
         continue;
 
       /*
@@ -644,7 +657,7 @@ bool areConditionsEquivalent(ScalarEvolution &SE, BranchInst *l1GuardCond,
       // WAR: L1 legge start1+i, L2 scrive start2+i.
       //      Se start1 > start2 -> L1 legge avanti rispetto a L2 -> blocca.
       if (Stride1 && Stride2 && Stride1 == Stride2) {
-        const SCEV *diffStart = isRAW
+        const SCEV *diffStart = isRAW || isWAW
             ? SE.getMinusSCEV(Start2, Start1)
             : SE.getMinusSCEV(Start1, Start2);
 
@@ -652,6 +665,9 @@ bool areConditionsEquivalent(ScalarEvolution &SE, BranchInst *l1GuardCond,
           return true;
       } else {
         // Stride diversi o non noti: non possiamo provare assenza di hazard
+        /*
+        Se gli stride sono diversi: a me va bene soltanto se i due start sono uguali
+        */
         const SCEV *diffStart = SE.getMinusSCEV(Start2, Start1);
         if (SE.isKnownNegative(diffStart) || SE.isKnownPositive(diffStart))
           return true;
@@ -746,7 +762,7 @@ bool areConditionsEquivalent(ScalarEvolution &SE, BranchInst *l1GuardCond,
     // le variabili di induzione sono le variabili che vengono incrementate ad ogni iterazione del loop e determinano il numero di iterazioni del loop stesso.
     auto L1Header = L1->getHeader();
     auto L1HeaderTerminator = L1Header->getTerminator();
-    auto L1InductionVar = L1->getCanonicalInductionVariable();
+    auto L1InductionVar = L1->getCanonicalInductionVariable();  //canoninca significa che parte da 0 e incrementa di 1 ad ogni iterazione, quindi è la più semplice da gestire
     auto L1Latch = L1->getLoopLatch();
     auto L1ExitBlock = getLoopExit(L1);
 
