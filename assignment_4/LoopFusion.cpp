@@ -337,6 +337,14 @@ bool areConditionsEquivalent(ScalarEvolution &SE, BranchInst *l1GuardCond,
      per rendere i loop adiacenti e quindi fusibili.
     Il problema: per fondere L1 e L2, non ci deve essere nulla in mezzo. Se c'è del codice intermedio, 
     va spostato o prima di L1 o dopo L2. Se anche una sola istruzione non è spostabile né da un lato né dall'altro, la fusione non è fattibile.
+    Quindi: 
+    Condizioni per lo spostamento:
+    1) per spostarsi indietro -> i suoi operandi non devono essere sovrascritti nel ciclo precedente
+
+    2) per spostarsi dopo -> il ciclo successivo non deve utilizzare/ridefinire la variabile
+
+    3) le istruzioni dipendenti l'una dall'altra devono trovarsi sullo stesso lato
+
    */
   bool canMoveInstructionsInBetweenLoops(
       Loop *L1, Loop *L2, BasicBlock *ExitL1, BranchInst *BI1,
