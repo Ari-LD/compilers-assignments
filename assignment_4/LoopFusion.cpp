@@ -717,7 +717,7 @@ bool areConditionsEquivalent(ScalarEvolution &SE, BranchInst *l1GuardCond,
   */
   bool isLoopDoWhile(Loop *L1) {
     // Controllo che il terminatore del blocco header del loop sia un'istruzione di branch.
-    // Se sì, verifico se il numero di successori del branch è minore o uguale a 1. 
+    // Se sì, verifico se il numero di successori del branch è minore o uguale a 1. Poichè l'uscita sta nel latch, quindi l'header ha solo un successore
     // Poichè un do-while loop ha un solo percorso di uscita, se il numero di successori è 1 o meno, allora il loop è considerato un do-while.
     if (auto branchHeader =
             dyn_cast<BranchInst>(L1->getHeader()->getTerminator()))
