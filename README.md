@@ -26,7 +26,8 @@ write a new Back-end.
 - Code transformation
     - Experimental validation (and the process is repeated)
 
-# Contributors
-- [Carmine De Rosa](https://github.com/derosacarmine/)
-- [Manuel Gherardi](https://github.com/GHManu)
-- [Arild Kuti](https://github.com/Ari-LD)
+## 👥 Contributors
+
+* <a href="https://github.com/derosacarmine/"><img src="https://github.com/derosacarmine.png" width="35px" style="border-radius:50%; vertical-align:middle; margin-right:5px;"/></a> **Carmine De Rosa** — [![GitHub](https://img.shields.io/badge/GitHub-derosacarmine-181717?style=flat&logo=github)](https://github.com/derosacarmine/)
+* <a href="https://github.com/GHManu"><img src="https://github.com/GHManu.png" width="35px" style="border-radius:50%; vertical-align:middle; margin-right:5px;"/></a> **Manuel Gherardi** — [![GitHub](https://img.shields.io/badge/GitHub-GHManu-181717?style=flat&logo=github)](https://github.com/GHManu)
+* <a href="https://github.com/Ari-LD"><img src="https://github.com/Ari-LD.png" width="35px" style="border-radius:50%; vertical-align:middle; margin-right:5px;"/></a> **Arild Kuti** — [![GitHub](https://img.shields.io/badge/GitHub-Ari--LD-181717?style=flat&logo=github)](https://github.com/Ari-LD)
